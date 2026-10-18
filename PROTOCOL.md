@@ -140,7 +140,32 @@ Without directives the mod falls back, in order, on:
    | aws s3 | `Completed 256.0 MiB/~1.0 GiB (12.3 MiB/s) with ~3 file(s) remaining` | on by default (`--no-progress` turns it off) |
    | git lfs | `Downloading LFS objects:  45% (9/20), 12 MiB \| 3.4 MiB/s` | as git |
    | Gradle | `<=====-----> 37% EXECUTING [12s]` (unverified) | `--console=rich`; the plain console draws no bar |
+   | jest | `PASS`/`FAIL file` per suite, then `Tests: 2 failed, 32 passed, 34 total` | on by default; under Claude Code (`CLAUDECODE` set) jest 30 picks its terse agent reporter, which keeps these lines |
+   | vitest | `✓ file (8 tests)` / `❯ file (9 tests \| 1 failed)`, with `--reporter=verbose` one line per test, then `Tests  2 failed \| 32 passed (34)` | on by default (agent reporter under Claude Code too) |
+   | go test | `--- PASS:`/`--- FAIL:` per test with `-v`, else `ok`/`FAIL` per package | `-v` for one line per test |
+   | cargo test | `running 11 tests`, `test name ... ok`/`FAILED` | `--no-fail-fast` to run every target |
+   | dotnet test | `Passed`/`Failed name [115 ms]` per test (in the system's language: `Réussi`/`Échoué`), then the totals | `--logger "console;verbosity=normal"` for one line per test |
+   | terraform | `Plan: 4 to add, …`, then `name: Still creating... [10s elapsed]` and `Creation complete` per resource | on by default (its colors are stripped) |
+   | kubectl | `Waiting for deployment "x" rollout to finish: 2 of 3 updated replicas are available...` | `kubectl rollout status` |
+   | yt-dlp | `[download]  41.5% of 25.74MiB at 2.91MiB/s ETA 00:05` | on by default |
+   | HandBrakeCLI | `Encoding: task 1 of 1, 36.33 % (159.40 fps, avg …, ETA 00h00m08s)` | on by default |
+   | pv | `160MiB 0:00:04 [40.0MiB/s] [====>   ] 53% ETA 0:00:03` | `-f` (nothing without it; `-n` prints bare numbers, which are not read) |
+   | 7-Zip | `51% 1 + data.bin`, rewritten with backspaces | `-bsp1` |
+   | dd | `537919488 bytes (538 MB, 513 MiB) copied, 4 s, 133 MB/s` | `status=progress` |
+   | dask | `[####      ] \| 52% Completed \| 5.62 s` | `ProgressBar()` |
+   | Spark | `[Stage 1:======>     (59 + 2) / 100]` | on by default (`spark.ui.showConsoleProgress=false` turns it off) |
+   | XGBoost, LightGBM | `[45]\tvalid-logloss:0.265…` per round, the validation metrics shown | `verbose_eval=N` / `log_evaluation(N)` |
+   | webpack | `<s> [webpack.Progress] 65% building …` | `--progress` |
+   | Bazel | `[10 / 21] Executing genrule //:g12; …`, then `Build completed successfully, 21 total actions` | on by default |
    | any | OSC 9;4 sequences (`ESC ] 9 ; 4 ; 1 ; 42 BEL`) | as the tool emits them |
+
+   Every format above was checked against the tool's real output written to a
+   file with no terminal attached (its version is in the tests), except
+   rclone, aws s3 and git lfs (from their source code) and Gradle (unverified).
+
+   A task that exits 0 short of its total is flagged only when its bar comes
+   from tqdm or `##progress`, which always print their final state: other
+   tools may stop short on success (Spark's last line reads 48/50).
 
    PowerShell's `Write-Progress` (and `Invoke-WebRequest`'s bar) goes to a
    stream of its own that never reaches a task's output file: use

@@ -188,6 +188,7 @@ async function refresh($: EngineInterface, track: Track, now: number): Promise<P
     sub: parsed.sub,
     lastLine: parsed.lastLine,
     error: parsed.error,
+    isExact: parsed.isExact,
   }
 
   const fraction = parsed.main ? fractionOf(parsed.main) : undefined

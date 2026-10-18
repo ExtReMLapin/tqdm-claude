@@ -123,7 +123,15 @@ export function figures(bar: Bar): string {
  * alive-progress's `(!)`. It waits for the person, as a failure does.
  */
 export function isShortOfTotal(track: Track): boolean {
-  return track.status === 'done' && track.main?.total !== undefined && track.main.n < track.main.total
+  // Only a source that always prints its final state (tqdm, ##progress) can say so: other tools stop
+  // short of their total on success (Spark's last line is 48/50, webpack's 99 %). And within 1 % of
+  // the total is done (ffmpeg's last time= a frame before the duration).
+  return (
+    track.status === 'done' &&
+    track.isExact === true &&
+    track.main?.total !== undefined &&
+    track.main.n < track.main.total * 0.99
+  )
 }
 
 /** The line a finished task keeps: `200/200 in 00:20 (9.9it/s)`, alive-progress's receipt. */

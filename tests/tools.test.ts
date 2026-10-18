@@ -151,7 +151,7 @@ describe('how a task ended', () => {
   })
 
   test('exit 0 short of the total is a warning that waits, like alive-progress\'s (!)', () => {
-    const short: Track = { ...base, status: 'done', exitCode: 0, endedAt: 5000, main: { n: 45, total: 100 } }
+    const short: Track = { ...base, status: 'done', exitCode: 0, endedAt: 5000, isExact: true, main: { n: 45, total: 100 } }
 
     expect(isShortOfTotal(short)).toBe(true)
     expect(hasDetailRow(short)).toBe(true)

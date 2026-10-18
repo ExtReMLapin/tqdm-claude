@@ -239,6 +239,371 @@ export type ToolContext = {
   tests?: { ok: number; fail: number }
   pipFile?: string
   copyFile?: string
+  /** go test: whether -v lines (one per test) were seen; the packages done. */
+  goTests?: boolean
+  packages?: { ok: number; fail: number }
+  /** cargo test: the tests its `running N tests` lines announced so far. */
+  announced?: number
+  /** The line a tool prints once its work is done, which completes its bar. */
+  lastDone?: { label: string; marker: string }
+  /** yt-dlp: the file its`Destination:` line names. */
+  download?: string
+  /** terraform: the plan's count of changes, and how many are done. */
+  plan?: { total: number; done: number }
+  /** kubectl rollout status: the deployment and its replicas. */
+  rollout?: { name: string; total: number }
+}
+
+// terraform (captured, v1.9.8): `Plan: 4 to add, 0 to change, 0 to destroy.`, then per resource
+// `time_sleep.a: Creating...`, `... Still creating... [10s elapsed]`, `... Creation complete after 35s [id=...]`
+const TF_PLAN = /^Plan: (\d+) to add, (\d+) to change, (\d+) to destroy\./
+const TF_DONE = /^(\S+): (?:Creation|Modifications|Destruction) complete after (\S+)/
+const TF_WORKING = /^(\S+): (?:Creating|Modifying|Destroying)\.\.\.|^(\S+): Still (?:creating|modifying|destroying)\.\.\. \[(\S+) elapsed\]/
+const TF_APPLIED = /^(?:Apply|Destroy) complete! Resources:/
+// kubectl rollout status (captured, v1.36): `Waiting for deployment "x" rollout to finish: 1 out of 3 new
+// replicas have been updated...`, `... 2 of 3 updated replicas are available...`,
+// `... 1 old replicas are pending termination...`, then `deployment "x" successfully rolled out`
+const KUBE_PROGRESS = /^Waiting for (?:deployment|daemon set|statefulset|rollout) "(.+?)" rollout to finish: (\d+) (?:out )?of (\d+) (new replicas have been updated|updated replicas are available|new pods have been updated|updated pods are available)/
+const KUBE_PENDING = /^Waiting for (?:deployment|daemon set|statefulset) "(.+?)" rollout to finish: (\d+) old replicas are pending termination/
+const KUBE_DONE = /^(?:deployment|daemon set|statefulset)(?:\.apps)? "(.+?)" successfully rolled out/
+
+// yt-dlp (captured, 2026.08.19): `[download] Destination: v.mp4`, then
+// `[download]  41.5% of   25.74MiB at    2.91MiB/s ETA 00:05`, last `[download] 100% of 25.74MiB in 00:00:09 at 2.79MiB/s`
+const YTDLP_FILE = /^\[download\] Destination: (.+)$/
+// (the last line has `in <time>` before `at <rate>`)
+const YTDLP = /^\[download\]\s+(\d{1,3}(?:\.\d+)?)% of\s+~?\s*([\d.]+\s*\w+)(?:\s+in\s+\S+)?(?:\s+at\s+(\S+\/s))?(?:\s+ETA\s+(\S+))?/
+// HandBrakeCLI (captured, 1.7.2): `Encoding: task 1 of 1, 36.33 % (159.40 fps, avg 159.40 fps, ETA 00h00m08s)`,
+// a log line sometimes glued after it
+const HANDBRAKE = /^Encoding: task (\d+) of (\d+), ([\d.]+) %(?: \(([\d.]+) fps, avg [\d.]+ fps, ETA (\d+)h(\d+)m(\d+)s\))?/
+// pv -f (captured, 1.8.5): ` 160MiB 0:00:04 [40.0MiB/s] [=========>    ]  53% ETA 0:00:03`, or with no
+// size known `80.0MiB 0:00:02 [40.0MiB/s] [ <=>     ]`
+const PV = /^([\d.]+\s*[KMGT]?i?B)\s+(\d+:\d\d:\d\d)\s+\[\s*([\d.]+\s*[KMGT]?i?B\/s)\]\s+\[[=> ]*\]\s+(\d{1,3})%(?:\s+ETA\s+(\d+:\d\d:\d\d))?/
+const PV_OPEN = /^([\d.]+\s*[KMGT]?i?B)\s+(\d+:\d\d:\d\d)\s+\[\s*([\d.]+\s*[KMGT]?i?B\/s)\]\s+\[\s*<=>\s*\]/
+// 7-Zip -bsp1 (captured, 23.01): `  51% 1 + data.bin`, updated in place with backspaces; `- name` when extracting
+const SEVEN_ZIP = /^(\d{1,3})%(?:\s+\d+)?\s+[+\-U=]\s+(.+)$/
+// GNU dd status=progress (captured, coreutils 9.4): `537919488 bytes (538 MB, 513 MiB) copied, 4 s, 133 MB/s`
+const DD = /^(\d+) bytes \(([\d.]+ \w+)(?:, [\d.]+ \w+)?\) copied, ([\d.]+) s, ([\d.]+ \w+\/s)/
+
+// Test runners, all captured with no terminal (and, for jest and vitest, as Claude Code runs them: with
+// CLAUDECODE set they switch to their terse agent reporters, which still print these lines).
+// jest 30: `PASS jt/a.test.js`, `FAIL jt/d.test.js`, then `Tests:       2 failed, 32 passed, 34 total`
+const JEST_SUITE = /^(PASS|FAIL)\s+(\S+)/
+const JEST_SUMMARY = /^Tests:\s+(?:(\d+) failed,\s*)?(?:(\d+) skipped,\s*)?(?:(\d+) todo,\s*)?(?:(\d+) passed,\s*)?(\d+) total/
+// vitest 5: ` ✓ vt/a.test.mjs (8 tests) 1264ms`, ` ❯ vt/d.test.mjs (9 tests | 1 failed) 1282ms`; with the
+// verbose reporter ` ✓ vt/a.test.mjs > a case 1 156ms`; then `      Tests  2 failed | 32 passed (34)`
+const VITEST_FILE = /^([✓❯×↓])\s+(\S+?\.[cm]?[jt]sx?)\s+\((\d+) tests?(?:\s*\|\s*(\d+) failed)?(?:\s*\|\s*(\d+) skipped)?\)/
+const VITEST_TEST = /^([✓×↓])\s+\S+\.[cm]?[jt]sx? > .+?(?:\s+\d+ms)?$/
+const VITEST_SUMMARY = /^Tests\s+(?:(\d+) failed\s*\|\s*)?(?:(\d+) passed)?(?:\s*\|\s*(\d+) skipped)?[^(]*\((\d+)\)$/
+// go test 1.25: with -v `--- PASS: TestCase1 (0.10s)` per test; always `ok  \tpkg\t1.108s` or `FAIL\tpkg\t1.159s`
+const GO_TEST = /^--- (PASS|FAIL|SKIP): (\S+)/
+const GO_PACKAGE = /^(ok|FAIL)\s+(\S+)\s+(?:[\d.]+s|\(cached\))/
+// cargo test 1.99: `running 11 tests`, `test case_10 ... ok` / `... FAILED` / `... ignored`
+const CARGO_RUNNING = /^running (\d+) tests?$/
+const CARGO_TEST = /^test (\S+) \.\.\. (ok|FAILED|ignored)/
+// dotnet test (SDK 10, VSTest), in the system's language: `Passed Caps.A.Case7 [115 ms]` or `Réussi ...`;
+// the summary `Failed!  - Failed:     2, Passed:    33, Skipped:     0, Total:    35, ...`
+// (`Échoué!  - échec :     2, réussite :    33, ignorée(s) :     0, total :    35, ...` in French)
+// (a test under a millisecond reads `[< 1 ms]`); with normal verbosity the run ends `Total tests: 35`
+const DOTNET_TEST = /^(\S+)\s+\S+\.\S+\s+\[<?\s*\d+(?:[.,]\d+)?\s*m?s\]$/
+const DOTNET_TOTAL = /^(?:Total tests|Nombre total de tests)\s*:\s*(\d+)$/
+const DOTNET_PASS = /^(Passed|Réussi|Bestanden|Superado|Riuscito)$/
+const DOTNET_FAIL = /^(Failed|Échoué|Fehlgeschlagen|Error)$/
+const DOTNET_SUMMARY = /^\S+!\s+-\s+[^:,]+:\s*(\d+),\s*[^:,]+:\s*(\d+),\s*[^:,]+:\s*(\d+),\s*[^:,]+:\s*(\d+),/
+
+function counted(context: ToolContext, ok: number, fail: number): { ok: number; fail: number } {
+  context.tests = { ok: (context.tests?.ok ?? 0) + ok, fail: (context.tests?.fail ?? 0) + fail }
+
+  return context.tests
+}
+
+/** Test runners: jest, vitest, go test, cargo test, dotnet test. Passes and failures go to the two-color bar. */
+function testBar(line: string, context: ToolContext): Bar | undefined {
+  let match = JEST_SUMMARY.exec(line)
+
+  if (match) {
+    const total = Number(match[5])
+
+    return { label: 'jest', n: total, total, ok: Number(match[4] ?? 0), fail: Number(match[1] ?? 0), unit: ' tests' }
+  }
+
+  if ((match = JEST_SUITE.exec(line)) && /\.(test|spec)\.[cm]?[jt]sx?$|__tests__/.test(match[2] ?? '')) {
+    const tests = counted(context, match[1] === 'PASS' ? 1 : 0, match[1] === 'FAIL' ? 1 : 0)
+
+    return { label: 'jest', n: tests.ok + tests.fail, ok: tests.ok, fail: tests.fail, unit: ' suites', postfix: match[2] }
+  }
+
+  if ((match = VITEST_SUMMARY.exec(line))) {
+    const total = Number(match[4])
+
+    return { label: 'vitest', n: total, total, ok: Number(match[2] ?? 0), fail: Number(match[1] ?? 0), unit: ' tests' }
+  }
+
+  if ((match = VITEST_FILE.exec(line))) {
+    const failed = Number(match[4] ?? 0)
+    const tests = counted(context, Number(match[3]) - failed - Number(match[5] ?? 0), failed)
+
+    return { label: 'vitest', n: tests.ok + tests.fail, ok: tests.ok, fail: tests.fail, unit: ' tests', postfix: match[2] }
+  }
+
+  if ((match = VITEST_TEST.exec(line))) {
+    const tests = counted(context, match[1] === '✓' ? 1 : 0, match[1] === '×' ? 1 : 0)
+
+    return { label: 'vitest', n: tests.ok + tests.fail, ok: tests.ok, fail: tests.fail, unit: ' tests' }
+  }
+
+  if ((match = GO_TEST.exec(line))) {
+    // Without -v go still prints failing tests: only a passing test's line says every test is listed.
+    if (match[1] !== 'FAIL') {
+      context.goTests = true
+    }
+
+    const tests = counted(context, match[1] === 'PASS' ? 1 : 0, match[1] === 'FAIL' ? 1 : 0)
+
+    return context.goTests
+      ? { label: 'go test', n: tests.ok + tests.fail, ok: tests.ok, fail: tests.fail, unit: ' tests', postfix: match[2] }
+      : undefined
+  }
+
+  if ((match = GO_PACKAGE.exec(line))) {
+    context.packages = {
+      ok: (context.packages?.ok ?? 0) + (match[1] === 'ok' ? 1 : 0),
+      fail: (context.packages?.fail ?? 0) + (match[1] === 'FAIL' ? 1 : 0),
+    }
+
+    // With -v the tests are counted; without, the packages are all there is.
+    const counts = context.goTests && context.tests ? context.tests : context.packages
+
+    return {
+      label: 'go test',
+      n: counts.ok + counts.fail,
+      ok: counts.ok,
+      fail: counts.fail,
+      unit: context.goTests ? ' tests' : ' packages',
+      postfix: match[2],
+    }
+  }
+
+  if ((match = CARGO_RUNNING.exec(line))) {
+    context.announced = (context.announced ?? 0) + Number(match[1])
+
+    return undefined
+  }
+
+  if ((match = CARGO_TEST.exec(line))) {
+    const tests = counted(context, match[2] === 'FAILED' ? 0 : 1, match[2] === 'FAILED' ? 1 : 0)
+
+    return { label: 'cargo test', n: tests.ok + tests.fail, total: context.announced, ok: tests.ok, fail: tests.fail, postfix: match[1] }
+  }
+
+  if ((match = DOTNET_SUMMARY.exec(line))) {
+    const total = Number(match[4])
+
+    return { label: 'dotnet test', n: total, total, ok: Number(match[2]), fail: Number(match[1]), unit: ' tests' }
+  }
+
+  if ((match = DOTNET_TOTAL.exec(line)) && context.tests) {
+    const total = Number(match[1])
+
+    return { label: 'dotnet test', n: total, total, ok: context.tests.ok, fail: context.tests.fail, unit: ' tests' }
+  }
+
+  if ((match = DOTNET_TEST.exec(line))) {
+    const word = match[1] ?? ''
+
+    if (DOTNET_PASS.test(word) || DOTNET_FAIL.test(word)) {
+      const tests = counted(context, DOTNET_PASS.test(word) ? 1 : 0, DOTNET_FAIL.test(word) ? 1 : 0)
+
+      return { label: 'dotnet test', n: tests.ok + tests.fail, ok: tests.ok, fail: tests.fail, unit: ' tests' }
+    }
+  }
+
+  return undefined
+}
+
+// Compute and builds, all captured with no terminal.
+// dask 2026.8 ProgressBar: `[####################                    ] | 52% Completed | 5.62 s`
+const DASK = /^\[[# ]+\] \| (\d{1,3})% Completed \| ([\d.]+ \w+)/
+// PySpark 3.5 (on by default): `[Stage 1:=================>         (59 + 2) / 100]`
+const SPARK = /^\[Stage (\d+):[=> ]*\((\d+) \+ (\d+)\) \/ (\d+)\]/
+// XGBoost 3.2 (verbose_eval): `[45]\ttrain-logloss:0.13592\ttrain-auc:0.99302\tvalid-logloss:0.26546\tvalid-auc:0.95584`
+// LightGBM 4.7 (log_evaluation): `[25]\ttrain's binary_logloss: 0.250063\ttrain's auc: 0.9664\tvalid's ...`
+const BOOSTING = /^\[(\d+)\]\t(\S+(?:'s \S+)?:\s?[-\d.e]+(?:\t.+)?)$/
+// webpack 5 --progress (or ProgressPlugin): `<s> [webpack.Progress] 65% building 1/1 entries 41/41 dependencies`
+const WEBPACK = /^<s> \[webpack\.Progress\] (\d{1,3})%\s*(.*)$/
+// Bazel 7: `[10 / 21] Executing genrule //:g12; 2s local ... (2 actions, 1 running)`, with --curses=yes
+// `[7 / 21] 2 actions running`; at the end `INFO: Build completed successfully, 21 total actions`
+const BAZEL = /^\[([\d,]+) \/ ([\d,]+)\]\s+(?:\[\w+\]\s+)?([^;]+?)(?:;.*|\s+\.\.\..*)?$/
+const BAZEL_DONE = /^INFO: Build completed successfully, ([\d,]+) total actions?/
+
+/** dask, Spark, XGBoost, LightGBM, webpack, Bazel. */
+function computeBar(line: string): Bar | undefined {
+  let match = DASK.exec(line)
+
+  if (match) {
+    return { label: 'dask', n: Number(match[1]), total: 100, unit: '%', postfix: match[2] }
+  }
+
+  if ((match = SPARK.exec(line))) {
+    return { label: `Spark stage ${match[1]}`, n: Number(match[2]), total: Number(match[4]), postfix: `${match[3]} running` }
+  }
+
+  if ((match = BOOSTING.exec(line))) {
+    const fields = (match[2] ?? '').split('\t')
+    const isLightGbm = fields.some(field => field.includes("'s "))
+    // The validation metrics say how training goes; the training ones only that it fits.
+    const shown = fields.filter(field => /^valid/.test(field))
+
+    return {
+      label: isLightGbm ? 'LightGBM' : 'XGBoost',
+      // XGBoost counts rounds from 0, LightGBM from 1.
+      n: Number(match[1]) + (isLightGbm ? 0 : 1),
+      unit: ' rounds',
+      postfix: (shown.length > 0 ? shown : fields).join(' ').replace(/'s /g, ' '),
+    }
+  }
+
+  if ((match = WEBPACK.exec(line))) {
+    return { label: 'webpack', n: Number(match[1]), total: 100, unit: '%', postfix: match[2]?.trim() || undefined }
+  }
+
+  if ((match = BAZEL.exec(line))) {
+    return {
+      label: 'Bazel',
+      n: Number(match[1]?.replace(/,/g, '')),
+      total: Number(match[2]?.replace(/,/g, '')),
+      postfix: match[3]?.trim(),
+    }
+  }
+
+  if ((match = BAZEL_DONE.exec(line))) {
+    const total = Number(match[1]?.replace(/,/g, ''))
+
+    return { label: 'Bazel', n: total, total }
+  }
+
+  return undefined
+}
+
+/** Media and files: yt-dlp, HandBrakeCLI, pv, 7-Zip, dd. */
+function mediaBar(line: string, context: ToolContext): Bar | undefined {
+  let match = YTDLP_FILE.exec(line)
+
+  if (match) {
+    context.download = match[1]?.trim()
+
+    return undefined
+  }
+
+  if ((match = YTDLP.exec(line))) {
+    const eta = match[4] && /^\d+:\d\d(:\d\d)?$/.test(match[4]) ? match[4] : undefined
+    const rate = match[3] && !match[3].startsWith('Unknown') ? match[3] : undefined
+
+    return {
+      label: context.download ?? 'yt-dlp',
+      n: Math.min(100, Number(match[1])),
+      total: 100,
+      unit: '%',
+      rate,
+      eta,
+      postfix: match[2]?.replace(/\s+/g, ''),
+    }
+  }
+
+  if ((match = HANDBRAKE.exec(line))) {
+    context.lastDone = { label: 'HandBrake', marker: 'Encode done!' }
+
+    const eta = match[5] ? `${Number(match[5])}:${match[6]}:${match[7]}` : undefined
+
+    return {
+      label: 'HandBrake',
+      n: Math.min(100, Number(match[3])),
+      total: 100,
+      unit: '%',
+      rate: match[4] ? `${match[4]} fps` : undefined,
+      eta,
+      postfix: match[2] !== '1' ? `task ${match[1]}/${match[2]}` : undefined,
+    }
+  }
+
+  if ((match = PV.exec(line))) {
+    return { label: 'pv', n: Number(match[4]), total: 100, unit: '%', rate: match[3], eta: match[5], postfix: match[1]?.replace(/\s+/g, '') }
+  }
+
+  if ((match = PV_OPEN.exec(line))) {
+    const done = bytesOf(match[1] ?? '')
+
+    return Number.isNaN(done) ? undefined : { label: 'pv', n: done, unit: 'B', rate: match[3] }
+  }
+
+  if ((match = SEVEN_ZIP.exec(line))) {
+    context.lastDone = { label: '7-Zip', marker: 'Everything is Ok' }
+
+    return { label: '7-Zip', n: Number(match[1]), total: 100, unit: '%', postfix: match[2]?.trim() }
+  }
+
+  // 7-Zip stops at 99 %, HandBrake at 99.94 %: their own word that the work is done completes the bar.
+  if (context.lastDone && line === context.lastDone.marker) {
+    return { label: context.lastDone.label, n: 100, total: 100, unit: '%' }
+  }
+
+  if ((match = DD.exec(line))) {
+    return { label: 'dd', n: Number(match[1]), unit: 'B', rate: match[4], postfix: `${match[3]} s` }
+  }
+
+  return undefined
+}
+
+/** terraform applies and kubectl rollouts: steps counted over lines. */
+function infraBar(line: string, context: ToolContext): Bar | undefined {
+  let match = TF_PLAN.exec(line)
+
+  if (match) {
+    context.plan = { total: Number(match[1]) + Number(match[2]) + Number(match[3]), done: 0 }
+
+    return { label: 'terraform', n: 0, total: context.plan.total || undefined, unit: ' changes' }
+  }
+
+  if ((match = TF_DONE.exec(line))) {
+    context.plan = { total: context.plan?.total ?? 0, done: (context.plan?.done ?? 0) + 1 }
+
+    return { label: 'terraform', n: context.plan.done, total: context.plan.total || undefined, unit: ' changes', postfix: `${match[1]} done` }
+  }
+
+  if ((match = TF_WORKING.exec(line))) {
+    const resource = match[1] ?? match[2]
+    const elapsed = match[3] ? ` ${match[3]}` : ''
+
+    return { label: 'terraform', n: context.plan?.done ?? 0, total: context.plan?.total || undefined, unit: ' changes', postfix: `${resource}${elapsed}` }
+  }
+
+  if (TF_APPLIED.test(line) && context.plan) {
+    return { label: 'terraform', n: context.plan.total, total: context.plan.total || undefined, unit: ' changes' }
+  }
+
+  if ((match = KUBE_PROGRESS.exec(line))) {
+    context.rollout = { name: match[1] ?? '', total: Number(match[3]) }
+
+    return {
+      label: `rollout ${match[1]}`,
+      n: Number(match[2]),
+      total: Number(match[3]),
+      postfix: match[4]?.startsWith('new') ? 'updated' : 'available',
+    }
+  }
+
+  if ((match = KUBE_PENDING.exec(line))) {
+    const total = context.rollout?.total
+
+    return { label: `rollout ${match[1]}`, n: total ?? 0, total, postfix: `${match[2]} old pending` }
+  }
+
+  if ((match = KUBE_DONE.exec(line))) {
+    const total = context.rollout?.total ?? 1
+
+    return { label: `rollout ${match[1]}`, n: total, total }
+  }
+
+  return undefined
 }
 
 // pytest: `tests/test_api.py ....F.  [ 45%]`, or with -v `tests/test_api.py::test_a PASSED  [ 45%]`
@@ -362,7 +727,8 @@ function runBar(line: string, context: ToolContext): Bar | undefined {
 }
 
 export function toolBar(line: string, context: ToolContext): Bar | undefined {
-  const run = runBar(line, context)
+  const run =
+    runBar(line, context) ?? testBar(line, context) ?? infraBar(line, context) ?? mediaBar(line, context) ?? computeBar(line)
 
   if (run) {
     return run
@@ -515,7 +881,8 @@ export function parse(text: string): Parsed {
           : undefined
   }
 
-  const segments = tail.replace(OSC_PROGRESS, '\n').replace(ANSI, '').split(/\r\n|\n|\r/)
+  // 7-Zip rewrites its line with backspaces, not carriage returns: a run of them ends an update too.
+  const segments = tail.replace(OSC_PROGRESS, '\n').replace(ANSI, '').replace(/\x08+/g, '\r').split(/\r\n|\n|\r/)
   const context: ToolContext = {}
   // ffmpeg prints its duration once, at the start: look for it before the tail too.
   const duration = FFMPEG_DURATION.exec(text.slice(0, 64 * 1024))
@@ -527,7 +894,7 @@ export function parse(text: string): Parsed {
   const protocol: Protocol = {}
   let hasProtocol = false
   // tqdm bars by label, in the order first seen, with the segment of their last update.
-  const bars = new Map<string, { bar: Bar; at: number }>()
+  const bars = new Map<string, { bar: Bar; at: number; isTqdm: boolean }>()
   const toolKeys = new Set<string>()
   let percent: Bar | undefined
 
@@ -568,7 +935,7 @@ export function parse(text: string): Parsed {
         toolKeys.add(key)
       }
 
-      bars.set(key, { bar, at })
+      bars.set(key, { bar, at, isTqdm: tqdm !== undefined })
 
       return
     }
@@ -592,6 +959,7 @@ export function parse(text: string): Parsed {
 
   if (hasProtocol) {
     parsed.main = protocol.main
+    parsed.isExact = protocol.main !== undefined
     parsed.sub = protocol.sub
     parsed.declared = protocol.declared
     parsed.lastLine = protocol.message ?? parsed.lastLine
@@ -604,6 +972,7 @@ export function parse(text: string): Parsed {
     const others = active.filter(one => one !== main)
 
     parsed.main = main.bar
+    parsed.isExact = main.isTqdm
     parsed.sub = others.length > 0 ? others.reduce((a, b) => (b.at > a.at ? b : a)).bar : undefined
 
     // Keras's `Epoch 2/2` opens the epoch: once its steps are all done, so is the epoch.

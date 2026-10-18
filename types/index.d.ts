@@ -30,6 +30,11 @@ export type Parsed = {
   error?: string
   /** Set by a `##progress done=ok|fail` line. */
   declared?: 'ok' | 'fail'
+  /**
+   * The main bar comes from a source that always prints its final state (tqdm, `##progress`):
+   * only then does a clean exit short of the total say the work stopped early.
+   */
+  isExact?: boolean
 }
 
 export type TrackStatus = 'running' | 'done' | 'failed' | 'killed'
@@ -57,6 +62,8 @@ export type Track = {
   size: number
   /** The output file is past what one read may copy: progress is no longer parsed. */
   isTooBig?: boolean
+  /** The main bar's source always prints its final state (see Parsed.isExact). */
+  isExact?: boolean
   /** When the main bar was first seen, and how far along: the estimate leaves out the start-up before it. */
   progressFrom?: { at: number; fraction: number }
   /** The main bar at the last poll that moved it, for the recent pace. */

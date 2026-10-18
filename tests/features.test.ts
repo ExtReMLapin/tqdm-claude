@@ -103,7 +103,7 @@ describe('what a task\'s end is worth telling', () => {
 
   test('failures mode', () => {
     expect(endNotice(ended({ status: 'failed', exitCode: 2 }), 'failures')).toEqual({ title: 'Task failed', text: 'Job · exit code 2' })
-    expect(endNotice(ended({ status: 'done', main: { n: 4, total: 10 } }), 'failures')?.title).toBe('Task ended early')
+    expect(endNotice(ended({ status: 'done', isExact: true, main: { n: 4, total: 10 } }), 'failures')?.title).toBe('Task ended early')
     expect(endNotice(ended({ status: 'done' }), 'failures')).toBeUndefined()
     expect(endNotice(ended({ status: 'killed' }), 'failures')).toBeUndefined()
   })
