@@ -101,7 +101,7 @@ const NINJA = /^\[(\d+)\/(\d+)\]\s+(.*)$/
 const CMAKE = /^\[\s*(\d{1,3})%\]\s+(.*)$/
 // git: `Receiving objects:  45% (450/1000), 1.20 MiB | 2.40 MiB/s`
 const GIT =
-  /^(?:remote:\s+)?((?:Enumerating|Counting|Compressing|Receiving|Writing|Unpacking) objects|Resolving deltas|Updating files|Checking out files):\s+\d{1,3}% \((\d+)\/(\d+)\)(?:,\s*(.*))?$/
+  /^(?:remote:\s+)?((?:Enumerating|Counting|Compressing|Receiving|Writing|Unpacking) objects|Resolving deltas|Updating files|Checking out files|(?:Downloading|Uploading) LFS objects|Filtering content):\s+\d{1,3}% \((\d+)\/(\d+)\)(?:,\s*(.*))?$/
 // Keras: `Epoch 3/10`, then `32/100 [========>.....] - ETA: 2s - loss: 0.3` or `32/100 ━━━━━━━ 1s 15ms/step - loss: 0.3`
 const KERAS_EPOCH = /^Epoch (\d+)\/(\d+)$/
 const KERAS_STEP = /^(\d+)\/(\d+)\s+(?:\[[=>.]*\]|[─-╿]+)\s*(.*)$/
@@ -233,7 +233,141 @@ function kerasTail(tail: string): Pick<Bar, 'rate' | 'eta' | 'postfix'> {
  * shape: a bare `n/m` anywhere in a line is never read, it is too often no
  * progress at all. `context` carries ffmpeg's duration across lines.
  */
-export function toolBar(line: string, context: { duration?: number }): Bar | undefined {
+/** What a tool's progress spreads over several lines: ffmpeg's duration, a test run's outcomes, the file at hand. */
+export type ToolContext = {
+  duration?: number
+  tests?: { ok: number; fail: number }
+  pipFile?: string
+  copyFile?: string
+}
+
+// pytest: `tests/test_api.py ....F.  [ 45%]`, or with -v `tests/test_api.py::test_a PASSED  [ 45%]`
+const PYTEST = /^(\S+?\.py)\s+([.FEsxX]+)\s+\[\s*(\d{1,3})%\]$/
+const PYTEST_VERBOSE = /^(\S+?\.py)::\S+\s+(PASSED|FAILED|ERROR|SKIPPED|XFAIL|XPASS)\s+\[\s*(\d{1,3})%\]$/
+// pip --progress-bar on: `   ---------------------------------------- 12.9/12.9 MB 10.9 MB/s eta 0:00:00`
+const PIP = /^\s*[-━╸╺]+\s+([\d.]+)\/([\d.]+)\s+([kMG]?B)\s+([\d.]+\s*[kMG]?B\/s)\s+eta\s+(\d+:\d\d:\d\d)$/
+const PIP_FILE = /^\s*Downloading (\S+)(?: \([\d.]+ [kMG]?B\))?$/
+// robocopy: a file's line, `\t  New File\t\t 400.0 m\tbig.bin` (its words translated, its
+// leading tab trimmed by the time it is read), then `  12.5%`
+const ROBOCOPY_FILE = /^[^\t]+\t+\s*[\d.]+\s*[kmgt]?\t(.+)$/i
+const ROBOCOPY_PERCENT = /^\s*(\d{1,3}(?:\.\d+)?)%$/
+// rclone: `Transferred:   	    1.234 GiB / 3.000 GiB, 41%, 12.345 MiB/s, ETA 2m23s (xfr#3/10)`
+const RCLONE = /^(?:Transferred:\s+)?(?:\d{4}\/\d\d\/\d\d [\d:]+\s+)?\s*([\d.]+ ?\w*B) \/ ([\d.]+ ?\w*B), (\d{1,3})%, ([\d.]+ ?\w*B\/s), ETA (\S+)/
+// aws s3 cp/sync: `Completed 256.0 MiB/~1.0 GiB (12.3 MiB/s) with ~3 file(s) remaining`
+const AWS_BYTES = /^Completed ([\d.]+ \w+)\/~?([\d.]+ \w+) \(([\d.]+ \w+\/s)\) with ~?(\d+) file\(s\) remaining/
+const AWS_FILES = /^Completed (\d+) file\(s\) with ~?(\d+) file\(s\) remaining/
+// Gradle's rich console: `<=====--------> 37% EXECUTING [12s]` (unverified; its plain console draws none)
+const GRADLE = /<[=\-]+>\s*(\d{1,3})%\s+(EXECUTING|CONFIGURING|INITIALIZING|WAITING)(?:\s*\[([^\]]+)\])?/
+
+const SIZE_UNITS: Record<string, number> = {
+  B: 1,
+  KB: 1e3,
+  MB: 1e6,
+  GB: 1e9,
+  TB: 1e12,
+  KIB: 1024,
+  MIB: 1024 ** 2,
+  GIB: 1024 ** 3,
+  TIB: 1024 ** 4,
+}
+
+/** `256.0 MiB` → bytes; NaN when it is no size. */
+function bytesOf(text: string): number {
+  const match = /^([\d.]+)\s*([KMGT]?i?B)(?:ytes)?$/i.exec(text.trim())
+  const unit = match?.[2]?.toUpperCase() ?? ''
+
+  return match && SIZE_UNITS[unit] !== undefined ? parseFloat(match[1] ?? '') * (SIZE_UNITS[unit] ?? 1) : NaN
+}
+
+/** Test runs and copies: pytest, pip downloads, robocopy, rclone, aws s3, Gradle. */
+function runBar(line: string, context: ToolContext): Bar | undefined {
+  let match = PYTEST.exec(line)
+
+  if (match) {
+    const marks = match[2] ?? ''
+    const fail = (marks.match(/[FE]/g) ?? []).length
+
+    context.tests = { ok: (context.tests?.ok ?? 0) + marks.length - fail, fail: (context.tests?.fail ?? 0) + fail }
+
+    return { label: 'pytest', n: Number(match[3]), total: 100, unit: '%', ok: context.tests.ok, fail: context.tests.fail, postfix: match[1] }
+  }
+
+  if ((match = PYTEST_VERBOSE.exec(line))) {
+    const isFail = match[2] === 'FAILED' || match[2] === 'ERROR'
+
+    context.tests = { ok: (context.tests?.ok ?? 0) + (isFail ? 0 : 1), fail: (context.tests?.fail ?? 0) + (isFail ? 1 : 0) }
+
+    return { label: 'pytest', n: Number(match[3]), total: 100, unit: '%', ok: context.tests.ok, fail: context.tests.fail, postfix: match[1] }
+  }
+
+  if ((match = PIP_FILE.exec(line))) {
+    context.pipFile = match[1]
+
+    return undefined
+  }
+
+  if ((match = PIP.exec(line))) {
+    return {
+      label: context.pipFile ?? 'pip',
+      n: parseFloat(match[1] ?? ''),
+      total: parseFloat(match[2] ?? '') || undefined,
+      rate: match[4],
+      eta: match[5],
+      postfix: match[3],
+    }
+  }
+
+  if ((match = ROBOCOPY_FILE.exec(line))) {
+    context.copyFile = match[1]?.trim()
+
+    return undefined
+  }
+
+  if (context.copyFile && (match = ROBOCOPY_PERCENT.exec(line))) {
+    return { label: 'robocopy', n: Math.min(100, Number(match[1])), total: 100, unit: '%', postfix: context.copyFile }
+  }
+
+  if ((match = RCLONE.exec(line))) {
+    return {
+      label: 'rclone',
+      n: Number(match[3]),
+      total: 100,
+      unit: '%',
+      rate: match[4],
+      eta: clockOf(match[5]),
+      postfix: `${match[1]} / ${match[2]}`,
+    }
+  }
+
+  if ((match = AWS_BYTES.exec(line))) {
+    const done = bytesOf(match[1] ?? '')
+    const total = bytesOf(match[2] ?? '')
+
+    if (!Number.isNaN(done) && !Number.isNaN(total) && total > 0) {
+      return { label: 'aws s3', n: done, total, rate: match[3], postfix: `${match[4]} file(s) left` }
+    }
+  }
+
+  if ((match = AWS_FILES.exec(line))) {
+    const done = Number(match[1])
+
+    return { label: 'aws s3', n: done, total: done + Number(match[2]), unit: ' files' }
+  }
+
+  if ((match = GRADLE.exec(line))) {
+    return { label: 'Gradle', n: Number(match[1]), total: 100, unit: '%', postfix: [match[2], match[3]].filter(Boolean).join(' ') }
+  }
+
+  return undefined
+}
+
+export function toolBar(line: string, context: ToolContext): Bar | undefined {
+  const run = runBar(line, context)
+
+  if (run) {
+    return run
+  }
+
   let match = CARGO.exec(line)
 
   if (match) {
@@ -382,7 +516,7 @@ export function parse(text: string): Parsed {
   }
 
   const segments = tail.replace(OSC_PROGRESS, '\n').replace(ANSI, '').split(/\r\n|\n|\r/)
-  const context: { duration?: number } = {}
+  const context: ToolContext = {}
   // ffmpeg prints its duration once, at the start: look for it before the tail too.
   const duration = FFMPEG_DURATION.exec(text.slice(0, 64 * 1024))
 

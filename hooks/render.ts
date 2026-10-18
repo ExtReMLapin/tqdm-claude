@@ -242,7 +242,9 @@ export function barParts(bar: Bar, prefix: string, width: number, now: number, g
 
   // enlighten's subcounters: the filled part split by outcome, failures always at least a cell.
   const filled = Math.round(fraction * barWidth)
-  const failedCells = Math.min(filled, Math.max(1, Math.round((filled * bar.fail) / bar.n)))
+  // Out of the outcomes counted, when both are (a test run's percentage is no count of them).
+  const outcomes = bar.ok !== undefined ? bar.ok + bar.fail : bar.n
+  const failedCells = Math.min(filled, Math.max(1, Math.round((filled * bar.fail) / Math.max(1, outcomes))))
 
   return {
     head,

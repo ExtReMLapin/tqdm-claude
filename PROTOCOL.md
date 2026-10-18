@@ -133,7 +133,18 @@ Without directives the mod falls back, in order, on:
    | curl | its default meter, or `#####   48.2%` with `-#` | on by default (stderr) |
    | pnpm | `Progress: resolved 123, reused 100, downloaded 20, added 0` | `--reporter=append-only` |
    | apt | `Progress: [ 45%]`, or `pmstatus:dpkg-exec:50.0:...` | `-o Dpkg::Progress-Fancy=1`, `-o APT::Status-Fd=1` |
+   | pytest | `tests/test_api.py ....F.  [ 45%]`, or `-v` lines `... PASSED  [ 45%]`; passes and failures are counted into a two-color bar | on by default |
+   | pip | `---------------------------------------- 6.4/12.9 MB 10.9 MB/s eta 0:00:01` | `--progress-bar on` (off when not a terminal) |
+   | robocopy | the file's line, then `  12.5%` (in any language) | on by default (`/NP` turns it off) |
+   | rclone | `Transferred: 1.234 GiB / 3.000 GiB, 41%, 12.3 MiB/s, ETA 2m23s` | `--progress` or `--stats 1s` |
+   | aws s3 | `Completed 256.0 MiB/~1.0 GiB (12.3 MiB/s) with ~3 file(s) remaining` | on by default (`--no-progress` turns it off) |
+   | git lfs | `Downloading LFS objects:  45% (9/20), 12 MiB \| 3.4 MiB/s` | as git |
+   | Gradle | `<=====-----> 37% EXECUTING [12s]` (unverified) | `--console=rich`; the plain console draws no bar |
    | any | OSC 9;4 sequences (`ESC ] 9 ; 4 ; 1 ; 42 BEL`) | as the tool emits them |
+
+   PowerShell's `Write-Progress` (and `Invoke-WebRequest`'s bar) goes to a
+   stream of its own that never reaches a task's output file: use
+   `Write-Output "##progress ..."` in PowerShell scripts instead.
 
    A bare `n/m` in an ordinary line is never read as progress: it is too
    often something else (`Saved 10/11 files`, a date).

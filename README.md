@@ -28,7 +28,8 @@ makes every background task visible and makes failure loud.
 - **Real progress, read from the task's output**: tqdm (with or without a
   total, scaled units, postfix metrics, nested bars), cargo, ninja, CMake, git,
   Keras, docker buildx, ffmpeg (a real percentage from its duration), rsync,
-  wget, curl, pnpm, apt, OSC 9;4, bare percentages. See [PROTOCOL.md](PROTOCOL.md#what-else-is-read).
+  wget, curl, pnpm, apt, pytest (passes and failures in two colors), pip,
+  robocopy, rclone, aws s3, git lfs, Gradle, OSC 9;4, bare percentages. See [PROTOCOL.md](PROTOCOL.md#what-else-is-read).
 - **Two levels**: a main bar and a sub-bar (step 3/7, then 1840/2400 within it).
 - **A one-line protocol** for scripts: `##progress step=3/7 label="Train" sub=1840/2400`.
   Claude is told about it, so the scripts it writes report progress.
@@ -183,7 +184,7 @@ session state and are gone when the session ends.
 
 ```bash
 claude plugin validate .
-claude plugin test .          # 147 tests: parser, rendering, charsets, signals, the band end to end
+claude plugin test .          # 164 tests: parser (on real tool output), rendering, charsets, signals, the band end to end
 ```
 
 `claude --plugin-dir .` runs a session with the mod loaded from this folder.
