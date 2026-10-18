@@ -142,6 +142,25 @@ describe('living with other plugins', () => {
   })
 })
 
+describe('subagents\' own commands', () => {
+  // Seen live: two research subagents' `cd …` commands showed as tasks of their own.
+  test('a command a subagent runs is not a task of the band: the subagent is', async ($, on) => {
+    const { clock, files } = world(on)
+
+    // The engine sets agentId on a subagent's calls; a test passes it as the engine would.
+    const fromSubagent = { tool: 'Bash' as const, command: 'cd /tmp && git clone x', run_in_background: true, agentId: 'agent-7' }
+
+    await $.tool.call(fromSubagent)
+    files.set(OUTPUT, 'Cloning...')
+    await clock.advance(1100)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+    expect(await texts(ui)).toBe('other plugin band')
+    await ui.unmount()
+  })
+})
+
 describe('how a task ends', () => {
   test('TaskStop ends it at once, as stopped', async ($, on) => {
     const { clock, files } = world(on)

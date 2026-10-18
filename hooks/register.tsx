@@ -574,16 +574,17 @@ export const register: Register = (on, options) => {
     }
   }).catch(($, e, next) => next(e))
 
+  // A subagent's own commands are its business: the subagent is followed as one task, with its time and end.
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
     startTimers($)
 
-    return followShell($, e, () => next(e))
+    return e.agentId === undefined ? followShell($, e, () => next(e)) : next(e)
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'PowerShell' }, ($, e, next) => {
     startTimers($)
 
-    return followShell($, e, () => next(e))
+    return e.agentId === undefined ? followShell($, e, () => next(e)) : next(e)
   }).catch(($, e, next) => next(e))
 
   // A subagent starting is the moment to begin polling the tasks list.
