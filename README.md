@@ -8,16 +8,8 @@ protocol) and shows crashes, stalls and silent failures the moment they happen.
 
 *Named after and inspired by [tqdm](https://github.com/tqdm/tqdm); not affiliated with it.*
 
-```
- ⠹ Train model                                     02:14 / ~05:30
-   Epochs ████████████▍░░░░░░░░░░░░░░  2/5  40%  30.0s/it
-   └ Batches ██████████████████████▋░░░░  77/100  77%  9.9it/s  loss=0.231
- ⠋ Copy shards                                      00:41
-   ░░░░████░░░░░░░░░░░░  copying shard_017.parquet
- ✗ Index docs                                       00:12                [x]
-   Indexing ████████░░░░░░░░░░░░  20/50  40%
-   exit code 1 · KeyError: 'path'
-```
+<img width="1675" height="526" alt="WindowsTerminal_8dZBUvjYKE" src="https://github.com/user-attachments/assets/5d5fb6c2-cfd0-49bd-a4ce-91af0346f0fd" />
+
 
 …and a summary at the end of the hint line under the prompt, beside Claude
 Code's own task pills: `esc to interrupt  ⠹ Train model 40% · ✗ Index docs`.
