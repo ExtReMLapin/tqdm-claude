@@ -272,8 +272,37 @@ export function barLine(bar: Bar, prefix: string, width: number, now: number, gl
 
 export const STALL_MS = 60_000
 
+/** A last line saying the work goes on quietly (a link, a compile, a download) earns a longer silence. */
+export const BUSY_STALL_MS = 180_000
+const BUSY = /\b(compil|link|build|bundl|transpil|generat|optimi[sz]|download|fetch|install|resolv|pull|push|upload|index|migrat|train|wait)/i
+
+/**
+ * Silent for longer than a task of its kind would be: a minute, or three after
+ * a line saying the work goes on quietly (Cline's "hot" grace, after the
+ * same words). Silence is measured from the output's last change.
+ */
 export function isStalled(track: Track, now: number): boolean {
-  return track.status === 'running' && track.kind === 'bg' && now - track.lastChangeAt > STALL_MS
+  const limit = track.lastLine && BUSY.test(track.lastLine) ? BUSY_STALL_MS : STALL_MS
+
+  return track.status === 'running' && track.kind === 'bg' && now - track.lastChangeAt > limit
+}
+
+/** What an exit code says beyond failure: a timeout, or the signal that ended the process (128 + n). */
+export function exitMeaning(code: number | undefined): string | undefined {
+  switch (code) {
+    case 124:
+      return 'timed out'
+    case 130:
+      return 'interrupted (Ctrl+C)'
+    case 137:
+      return 'killed (SIGKILL, often out of memory)'
+    case 139:
+      return 'crashed (segmentation fault)'
+    case 143:
+      return 'terminated (SIGTERM)'
+    default:
+      return undefined
+  }
 }
 
 /**
@@ -410,7 +439,8 @@ export function rowsOf(track: Track): number {
 
 /** What a failed or killed track says under its bars. */
 export function failureOf(track: Track): string {
-  const code = track.exitCode === undefined ? '' : `exit code ${track.exitCode}`
+  const meaning = exitMeaning(track.exitCode)
+  const code = track.exitCode === undefined ? '' : `exit code ${track.exitCode}${meaning ? ` (${meaning})` : ''}`
   const reason = track.error ?? track.lastLine
 
   if (track.status === 'killed') {

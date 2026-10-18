@@ -60,6 +60,7 @@ const PROTOCOL_SECTION = {
     '- Run anything expected to take more than ~30 seconds with run_in_background, and give it a short `description`: it is the band\'s title.',
     '- Make output unbuffered so progress reaches the file: `python -u` or PYTHONUNBUFFERED=1, `print(..., flush=True)`, `stdbuf -oL` for other tools.',
     '- In scripts you write, report progress with one line per update: `##progress step=3/7 label="Training" sub=1840/2400 sublabel="Epoch 3"` (`sub=1840` with no total when unknown; `pct=45` for a bare percentage; `ok=12 fail=2` to count outcomes; `msg="..."` for a status; `done=ok` or `done=fail` when a long-lived process finished its work). tqdm output needs nothing extra.',
+    '- Do not poll a background task\'s output file or sleep to wait for it: the band shows its progress to the person, and you are notified when it ends.',
     '- When a background task ends, report its exit code; never take silence for success.',
   ].join('\n'),
 } as const

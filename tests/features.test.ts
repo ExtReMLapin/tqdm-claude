@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import type { Track } from '../types'
 import { parse } from '../hooks/parse'
-import { barParts, endNotice, modeLabelOf, spinInterval } from '../hooks/render'
+import { barParts, endNotice, failureOf, isStalled, modeLabelOf, spinInterval } from '../hooks/render'
 
 const base: Track = { id: 't', label: 'Job', kind: 'bg', startedAt: 0, status: 'running', lastChangeAt: 0, size: 10 }
 
@@ -85,6 +85,20 @@ describe('outcome counters', () => {
 
     expect(parts.failed).toBe('')
     expect(parts.done).toMatch(/[▏▎▍▌▋▊▉]/)
+  })
+})
+
+describe('silence and exit codes', () => {
+  test('a quiet link or download earns three minutes before it is called silent', () => {
+    expect(isStalled({ ...base, lastLine: 'Linking target app' }, 90_000)).toBe(false)
+    expect(isStalled({ ...base, lastLine: 'Linking target app' }, 181_000)).toBe(true)
+    expect(isStalled({ ...base, lastLine: 'step 3 done' }, 61_000)).toBe(true)
+  })
+
+  test('exit codes that name their cause', () => {
+    expect(failureOf({ ...base, status: 'failed', exitCode: 137 })).toBe('exit code 137 (killed (SIGKILL, often out of memory))')
+    expect(failureOf({ ...base, status: 'failed', exitCode: 124 })).toBe('exit code 124 (timed out)')
+    expect(failureOf({ ...base, status: 'failed', exitCode: 2 })).toBe('exit code 2')
   })
 })
 
