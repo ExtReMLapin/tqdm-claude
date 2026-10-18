@@ -1,0 +1,11 @@
+{
+  "name": "tqdm-claude",
+  "owner": { "name": "ExtReMLapin", "url": "https://github.com/ExtReMLapin" },
+  "plugins": [
+    {
+      "name": "tqdm-claude",
+      "source": "./",
+      "description": "Claude Code mod: live tqdm-style progress bars above the prompt for background tasks and subagents, with crash and stall detection."
+    }
+  ]
+}

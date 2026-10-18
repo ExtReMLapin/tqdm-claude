@@ -1,0 +1,45 @@
+{
+  "name": "tqdm-claude",
+  "version": "0.1.0",
+  "author": { "name": "ExtReMLapin", "url": "https://github.com/ExtReMLapin" },
+  "homepage": "https://github.com/ExtReMLapin/tqdm-claude",
+  "repository": "https://github.com/ExtReMLapin/tqdm-claude",
+  "license": "MIT",
+  "keywords": ["progress-bar", "tqdm", "background-tasks", "subagents", "mod"],
+  "description": "Claude Code mod: live tqdm-style progress bars above the prompt for background tasks and subagents, with crash and stall detection.",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "charset": {
+      "type": "string",
+      "title": "Progress glyphs",
+      "description": "auto picks unicode, or ascii where the locale names a charset that is not UTF-8. unicode: eighth-cell bars and a braille spinner. blocks: full and shaded cells only (code page 437), for a font that lacks the others. ascii: # and - like tqdm's ascii mode.",
+      "default": "auto",
+      "options": ["auto", "unicode", "blocks", "ascii"]
+    },
+    "footer": {
+      "type": "boolean",
+      "title": "Summary in the footer",
+      "description": "Also sums up running and failed tasks at the end of the hint line under the prompt, beside Claude Code's own task pills.",
+      "default": true
+    },
+    "agents": {
+      "type": "boolean",
+      "title": "Follow subagents",
+      "description": "Also shows subagents (the tasks list's agent rows) with their elapsed time and how they ended.",
+      "default": true
+    },
+    "notify": {
+      "type": "string",
+      "title": "Notifications",
+      "description": "A native notification (your notification channel) when a task ends. failures: a failure or an early end. always: also a stop, and a success that took a minute or more. off: none.",
+      "default": "failures",
+      "options": ["failures", "always", "off"]
+    },
+    "stuck": {
+      "type": "boolean",
+      "title": "Stuck-turn warning",
+      "description": "Warns in the band when a turn has had no tool call start or end for 3 minutes: Claude may be stuck.",
+      "default": true
+    }
+  }
+}
