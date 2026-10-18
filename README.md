@@ -102,7 +102,7 @@ says the same where organization policy keeps plugins out of the system prompt.
 | `classic.Stop` | At a turn's end, ends tasks the session no longer lists. |
 | `prompt.submit`, `turn.complete` | Whether a turn is running. |
 | `$.ui.notify` | Tells you of a failure through your notification channel. |
-| `$.clock.every` | Reads changed output files once a second; animates at ~8 fps while something runs. |
+| `$.clock.every` | Reads changed output files once a second; animates at ~4 fps while something runs. |
 | `$.agent.list()` | Mirrors the tasks list's subagents. |
 | `ui.render` `AbovePrompt` | Draws the band. |
 | `ui.render` `PromptHint` | Adds the summary after Claude Code's own hint line. |
@@ -110,6 +110,57 @@ says the same where organization policy keeps plugins out of the system prompt.
 
 It never runs your tasks, never writes to their output, and never emits OSC 9;4
 itself (Claude Code drives the terminal's own progress indicator).
+
+## What it reads, writes and sends
+
+**Nothing leaves your machine.** The mod makes no network request (no
+`$.http`), starts no process (no `$.process`) and writes no file.
+
+What it **reads**:
+
+- **Task output files** (`$.fs.stat`, `$.fs.read`): only the output file
+  Claude Code itself names when it starts a background Bash or PowerShell task
+  (`Output is being written to: …`), the last 64 KiB of it, to draw the bars.
+  No other file.
+- **Conversation rows** (`session.append`): only rows holding a
+  `<task-notification>`, for a task's id, status and exit code. Other rows pass
+  through untouched and unread.
+- **Prompts** (`prompt.submit`): only the moment a turn starts, for the
+  stuck-turn warning. The prompt's text is not read, kept or changed.
+- **Tool calls** (`tool.call`): a Bash or PowerShell call's `description`,
+  `command` (its first line, as the title when there is no description) and
+  `run_in_background`, and the task id in its result; `TaskStop`'s task id; the
+  start and end of every call, for the stuck-turn warning. Every call goes on
+  unchanged.
+- **The tasks list** (`$.agent.list`, `classic.Stop`): subagents' description
+  and status, and the ids of background tasks still running at a turn's end.
+- **Three environment variables** (`LC_ALL`, `LC_CTYPE`, `LANG`): to pick ASCII
+  bars where the locale is not UTF-8.
+
+What it **sends**, and where:
+
+- **`$.ui.notify`**: when a task fails or ends early (or, with
+  `notify=always`, when a long one ends), a native notification with the
+  task's title, its exit code and its last error line. It goes to *your own*
+  notification channel, the one Claude Code uses for its own notifications
+  (your terminal's notification, or its bell), on this machine. Turn it off
+  with `notify=off`.
+
+What it **changes**:
+
+- **The system prompt** (`prompt.compose`): adds one section, `tqdm-claude:protocol`,
+  telling Claude to run long commands in the background, to keep their output
+  unbuffered and to print `##progress` lines. Nothing else in the prompt is
+  read or changed. It is not added under `--bare`.
+- **The screen** (`ui.render`): draws the band above the prompt, above any
+  other plugin's band, and adds a summary after the hint line under the prompt,
+  after any other plugin's.
+- **Commands** (`command.register`, `command.run`): adds `/tqdm` and answers
+  only it; other commands pass through untouched.
+
+The settings of the mod (its `charset`, `footer`, `agents`, `notify`, `stuck`
+options) are Claude Code's own; the tasks it follows live in Claude Code's
+session state and are gone when the session ends.
 
 ## Limits
 

@@ -5,6 +5,7 @@
   "homepage": "https://github.com/ExtReMLapin/tqdm-claude",
   "repository": "https://github.com/ExtReMLapin/tqdm-claude",
   "license": "MIT",
+  "icon": "./.claude-plugin/icon.png",
   "keywords": ["progress-bar", "tqdm", "background-tasks", "subagents", "mod"],
   "description": "Claude Code mod: live tqdm-style progress bars above the prompt for background tasks and subagents, with crash and stall detection.",
   "types": "./types/index.d.ts",
