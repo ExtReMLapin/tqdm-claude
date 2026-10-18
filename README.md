@@ -10,6 +10,8 @@ protocol) and shows crashes, stalls and silent failures the moment they happen.
 
 *Named after and inspired by [tqdm](https://github.com/tqdm/tqdm); not affiliated with it.*
 
+Origin of the name : "**T**'attends **q**uoi ? **D**épèches-toi, **m**erde."  (they will deny it but it is what is it)
+
 <img width="1675" height="526" alt="WindowsTerminal_8dZBUvjYKE" src="https://github.com/user-attachments/assets/5d5fb6c2-cfd0-49bd-a4ce-91af0346f0fd" />
 
 
