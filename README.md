@@ -75,6 +75,12 @@ In the desktop app: **+** next to the prompt → Plugins → Add marketplace
 
 The mod is active at once; start a long command in the background to see it.
 
+To get new versions without thinking about it, turn on auto-update for this
+marketplace: `/plugin` → **Marketplaces** → `tqdm-claude` → **Enable
+auto-update** (it is off by default for marketplaces other than Anthropic's).
+Otherwise, update by hand with `claude plugin update tqdm-claude@tqdm-claude`
+and restart Claude Code.
+
 ## Settings
 
 In `/config` (or `pluginConfigs` in settings):
