@@ -117,7 +117,7 @@ describe('living with other plugins', () => {
     await ui.unmount()
   })
 
-  test('the footer summary is added after another plugin\'s tail, not in its place', async ($, on) => {
+  test('the footer summary is added after another plugin\'s tail, not in its place', { options: { footer: 'tail' } }, async ($, on) => {
     const { clock, files } = world(on)
 
     on('ui.render', { component: 'PromptHint' }, ($, e) => {
@@ -138,6 +138,69 @@ describe('living with other plugins', () => {
 
     expect(line).toContain('other tail')
     expect(line).toContain('Job 50%')
+    await ui.unmount()
+  })
+})
+
+describe('the footer mode label (the default)', () => {
+  const MODE = { plugin: PLUGIN, component: 'SessionMode', props: { modes: ['focus'] } } as const
+
+  function engineModes(on: On) {
+    on('ui.render', { component: 'SessionMode' }, ($, e) => {
+      const { Text } = $.ui.resolve(e)
+
+      return <Text>{e.props.modes.join(' & ')}</Text>
+    })
+  }
+
+  test('one task by name and percentage, after the engine\'s own labels', async ($, on) => {
+    const { clock, files } = world(on)
+
+    engineModes(on)
+    await start($ as never, files, 'Job:  43%|████▎     | 43/100 [00:05<00:06]')
+    await clock.advance(1100)
+
+    const ui = await $.ui.mount({ ...MODE, surface: 'terminal' })
+
+    expect(await texts(ui)).toMatch(/^focus & [⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏] Job 43%$/)
+    await ui.unmount()
+  })
+
+  test('a failure waiting is counted', async ($, on) => {
+    const { clock, files } = world(on)
+
+    engineModes(on)
+    await start($ as never, files, 'x')
+    await clock.advance(1100)
+    await $.session.append(notification('failed', 1))
+    await clock.advance(0)
+
+    const ui = await $.ui.mount({ ...MODE, surface: 'terminal' })
+
+    expect(await texts(ui)).toBe('focus & ✗ 1')
+    await ui.unmount()
+  })
+
+  test('nothing to say: the engine\'s labels alone', async ($, on) => {
+    world(on)
+    engineModes(on)
+
+    const ui = await $.ui.mount({ ...MODE, surface: 'terminal' })
+
+    expect(await texts(ui)).toBe('focus')
+    await ui.unmount()
+  })
+
+  test('footer=tail leaves the mode labels alone', { options: { footer: 'tail' } }, async ($, on) => {
+    const { clock, files } = world(on)
+
+    engineModes(on)
+    await start($ as never, files, 'x')
+    await clock.advance(1100)
+
+    const ui = await $.ui.mount({ ...MODE, surface: 'terminal' })
+
+    expect(await texts(ui)).toBe('focus')
     await ui.unmount()
   })
 })

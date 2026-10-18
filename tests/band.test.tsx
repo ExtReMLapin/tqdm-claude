@@ -266,7 +266,7 @@ describe('the footer', () => {
     })
   }
 
-  test('running and failed tasks are summed up after the engine line', async ($, on) => {
+  test('running and failed tasks are summed up after the engine line', { options: { footer: 'tail' } }, async ($, on) => {
     const { clock, files } = world(on)
 
     engineHint(on)

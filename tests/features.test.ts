@@ -2,7 +2,7 @@ import { describe, expect, test } from 'claude-code/testing'
 
 import type { Track } from '../types'
 import { parse } from '../hooks/parse'
-import { barParts, endNotice, spinInterval } from '../hooks/render'
+import { barParts, endNotice, modeLabelOf, spinInterval } from '../hooks/render'
 
 const base: Track = { id: 't', label: 'Job', kind: 'bg', startedAt: 0, status: 'running', lastChangeAt: 0, size: 10 }
 
@@ -85,6 +85,27 @@ describe('outcome counters', () => {
 
     expect(parts.failed).toBe('')
     expect(parts.done).toMatch(/[▏▎▍▌▋▊▉]/)
+  })
+})
+
+describe('the footer mode label', () => {
+  const at = (patch: Partial<Track>): Track => ({ ...base, ...patch })
+
+  test('one running task: its name and percentage', () => {
+    expect(modeLabelOf([at({ label: 'Train', main: { n: 43, total: 100 } })], 0)).toMatch(/^⠋ Train 43%$/)
+  })
+
+  test('several: their count, the most urgent one\'s percentage, the failures waiting', () => {
+    const label = modeLabelOf(
+      [at({ id: 'a', main: { n: 43, total: 100 }, startedAt: 2 }), at({ id: 'b', startedAt: 1 }), at({ id: 'c', status: 'failed' })],
+      0,
+    )
+
+    expect(label).toBe('⠋ 2 tasks · 43% · ✗ 1')
+  })
+
+  test('nothing running or waiting: nothing', () => {
+    expect(modeLabelOf([at({ status: 'done', endedAt: 1 })], 0)).toBe('')
   })
 })
 

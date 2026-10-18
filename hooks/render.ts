@@ -351,6 +351,41 @@ export function summaryOf(tracks: readonly Track[], now: number, glyphs: Glyphs 
 }
 
 /**
+ * The footer's mode label, right of the hint line, never cut: one task by its
+ * name (`⠋ Train 43%`), several by count (`⠋ 3 tasks · 43% · ✗ 1`), the
+ * percentage of the most urgent running one, and the failures waiting.
+ */
+export function modeLabelOf(tracks: readonly Track[], now: number, glyphs: Glyphs = UNICODE): string {
+  const running = ordered(tracks).filter(one => one.status === 'running')
+  const waiting = tracks.filter(hasDetailRow).length
+
+  if (running.length === 0 && waiting === 0) {
+    return ''
+  }
+
+  const lead = running[0]
+  const fraction = lead?.main ? fractionOf(lead.main) : undefined
+  const percent = fraction === undefined ? '' : `${Math.floor(fraction * 100)}%`
+  const parts: string[] = []
+
+  if (lead) {
+    const icon = glyph(lead, now, glyphs)
+
+    parts.push(running.length === 1 ? `${icon} ${clip(lead.label, 20, glyphs.ellipsis)}${percent ? ` ${percent}` : ''}` : `${icon} ${running.length} tasks`)
+
+    if (running.length > 1 && percent) {
+      parts.push(percent)
+    }
+  }
+
+  if (waiting > 0) {
+    parts.push(`${glyphs.failed} ${waiting}`)
+  }
+
+  return parts.join(' · ')
+}
+
+/**
  * A running track with no main bar draws a sweeping one in its place; one
  * that ended well says it all in its header's receipt; one that ended badly
  * keeps its bar where it stopped.

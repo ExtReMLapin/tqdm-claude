@@ -18,10 +18,11 @@
       "options": ["auto", "unicode", "blocks", "ascii"]
     },
     "footer": {
-      "type": "boolean",
+      "type": "string",
       "title": "Summary in the footer",
-      "description": "Also sums up running and failed tasks at the end of the hint line under the prompt, beside Claude Code's own task pills.",
-      "default": true
+      "description": "Where the line under the prompt sums up running and failed tasks. mode: a label at its right, beside Claude Code's own mode labels, never cut. tail: after Claude Code's task pills on the left, cut where the line runs out. both, or off.",
+      "default": "mode",
+      "options": ["mode", "tail", "both", "off"]
     },
     "agents": {
       "type": "boolean",

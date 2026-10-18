@@ -22,6 +22,7 @@ import {
   receiptOf,
   rowsOf,
   silentStartHint,
+  modeLabelOf,
   summaryOf,
   timing,
 } from './render'
@@ -488,7 +489,9 @@ async function touch($: EngineInterface, change: number): Promise<void> {
 
 export const register: Register = (on, options) => {
   const charset = typeof options.charset === 'string' ? options.charset : 'auto'
-  const hasFooter = options.footer !== false
+  // Where the footer summary goes: the mode labels right of the hint line (never cut), the hint line's
+  // tail (cut where the line runs out), both, or nowhere. A boolean is the option's earlier form.
+  const footer = options.footer === false || options.footer === 'off' ? 'off' : options.footer === 'tail' || options.footer === 'both' ? options.footer : 'mode'
   const isWarningStuck = options.stuck !== false
 
   notifyMode = options.notify === 'always' || options.notify === 'off' ? options.notify : 'failures'
@@ -659,10 +662,24 @@ export const register: Register = (on, options) => {
     return stored
   }).catch(($, e, next) => next(e))
 
+  on('ui.render', { component: 'SessionMode' }, async ($, e, next) => {
+    await read($, second)
+
+    if (footer !== 'mode' && footer !== 'both') {
+      return next(e)
+    }
+
+    const now = await $.clock.now()
+    const list = (await read($, tracks)).filter(one => isShown(one, now))
+    const label = modeLabelOf(list, now, CHARSETS[chooseCharset(charset, await loadEnv($), e.surface)])
+
+    // Added after the engine's own labels and any other plugin's, never in their place.
+    return label ? next({ ...e, props: { ...e.props, modes: [...e.props.modes, label] } }) : next(e)
+  })
   on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
     await read($, second)
 
-    if (!hasFooter) {
+    if (footer !== 'tail' && footer !== 'both') {
       return next(e)
     }
 
