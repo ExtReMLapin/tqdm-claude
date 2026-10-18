@@ -1,5 +1,7 @@
 # tqdm-claude
 
+Installation : `/plugin install tqdm-claude --marketplace ExtReMLapin/tqdm-claude`
+
 **Live progress bars inside Claude Code for background tasks and subagents.**
 A Claude Code mod (a plugin built on the function-hooks API) that draws
 tqdm-style bars above the prompt for every background shell task. It reads the
