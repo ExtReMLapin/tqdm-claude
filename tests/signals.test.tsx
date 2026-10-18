@@ -205,6 +205,66 @@ describe('the footer mode label (the default)', () => {
   })
 })
 
+describe('foreground commands', () => {
+  // Checked live: a foreground call's output grows in the tasks folder while it runs.
+  test('a foreground call\'s output file is found in the tasks folder, and its bars drawn', async ($, on) => {
+    const clock = mock.clock(on, { now: 1_000_000 })
+    const files = new Map<string, string>()
+    const DIR = 'C:\\tmp\\tasks'
+
+    mock.env(on, {})
+    on('fs.stat', ($, e) => {
+      const text = files.get(e.path)
+
+      return text === undefined ? { deny: 'ENOENT' } : { value: { kind: 'file', size: text.length, mtimeMs: 0, isLink: false } }
+    })
+    on('fs.read', ($, e) => {
+      const text = files.get(e.path)
+
+      return text === undefined ? { deny: 'ENOENT' } : { value: text }
+    })
+    on('fs.list', ($, e) => ({
+      value: [...files.keys()]
+        .filter(path => path.startsWith(`${e.path}/`) || path.startsWith(`${e.path}\\`))
+        .map(path => ({ name: path.slice(e.path.length + 1), kind: 'file' as const, size: 1, mtimeMs: 0, isLink: false })),
+    }))
+    on('tool.call', { tool: 'Bash' }, async ($, e) => {
+      if (e.run_in_background) {
+        files.set(`${DIR}\\b1.output`, '')
+
+        return {
+          result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'b1' },
+          text: `Command running in background with ID: b1. Output is being written to: ${DIR}\\b1.output. You will be notified`,
+        }
+      }
+
+      // Claude Code writes a foreground call's output to a new file in the tasks folder as it runs.
+      files.set(`${DIR}\\bfgprobe1.output`, 'Train:  40%|████      | 40/100 [00:04<00:06]')
+      await clock.sleep(10_000)
+
+      return { result: { stdout: 'ok', stderr: '', interrupted: false }, text: 'ok' }
+    })
+    on('ui.render', { component: 'AbovePrompt' }, ($, e) => {
+      const { Text } = $.ui.resolve(e)
+
+      return <Text>other plugin band</Text>
+    })
+
+    // A background call first: it names the tasks folder (with `\`), and its own file is not the foreground one's.
+    await $.tool.call({ tool: 'Bash', command: 'true', description: 'quick', run_in_background: true })
+    files.set(`${DIR}\\b2zzzzzzz.output`, 'another background task')
+    void $.tool.call({ tool: 'Bash', command: 'python -u train.py', description: 'Train in front' })
+    await clock.advance(4000)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const drawn = await texts(ui)
+
+    expect(drawn).toContain('Train in front')
+    expect(drawn).toContain('40/100')
+    await ui.unmount()
+  })
+})
+
 describe('subagents\' own commands', () => {
   // Seen live: two research subagents' `cd …` commands showed as tasks of their own.
   test('a command a subagent runs is not a task of the band: the subagent is', async ($, on) => {

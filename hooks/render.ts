@@ -284,7 +284,9 @@ const BUSY = /\b(compil|link|build|bundl|transpil|generat|optimi[sz]|download|fe
 export function isStalled(track: Track, now: number): boolean {
   const limit = track.lastLine && BUSY.test(track.lastLine) ? BUSY_STALL_MS : STALL_MS
 
-  return track.status === 'running' && track.kind === 'bg' && now - track.lastChangeAt > limit
+  const isRead = track.kind === 'bg' || (track.kind === 'fg' && track.outputFile !== undefined)
+
+  return track.status === 'running' && isRead && now - track.lastChangeAt > limit
 }
 
 /** What an exit code says beyond failure: a timeout, or the signal that ended the process (128 + n). */

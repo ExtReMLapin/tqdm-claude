@@ -54,7 +54,8 @@ makes every background task visible and makes failure loud.
 - **Plays well with other mods**: the band is drawn above theirs, the footer
   summary is added after theirs; a task ends on its notification, on
   `TaskStop`, or when the session stops listing it at a turn's end.
-- **Foreground commands** longer than 3 s get a spinner too.
+- **Foreground commands too**: past 3 s, a foreground command gets its bar,
+  read from the output file Claude Code writes as it runs.
 - **Works everywhere Claude Code does**: Windows, macOS, Linux, terminal and
   desktop. Glyphs follow tqdm's lead: Unicode eighth-blocks by default, ASCII
   where the locale is not UTF-8, and a code-page-437 set for fonts that lack
@@ -81,7 +82,7 @@ In `/config` (or `pluginConfigs` in settings):
 | Option | Default | |
 |---|---|---|
 | `charset` | `auto` | `unicode`, `blocks` (code page 437, if your font shows boxes), or `ascii`. |
-| `footer` | `true` | The summary at the end of the hint line. |
+| `footer` | `mode` | Where the line under the prompt sums up tasks: `mode` (a label at its right, never cut), `tail` (after Claude Code's task pills), `both`, `off`. |
 | `agents` | `true` | Follow subagents too. |
 | `notify` | `failures` | Native notification when a task fails or ends early; `always` adds stops and successes of a minute or more; `off`. |
 | `stuck` | `true` | Warn when a turn has had no tool call for 3 minutes: Claude may be stuck. |
@@ -107,6 +108,8 @@ says the same where organization policy keeps plugins out of the system prompt.
 | `session.append` | Reads `<task-notification>` rows: how a task ended, with its exit code. |
 | `classic.Stop` | At a turn's end, ends tasks the session no longer lists. |
 | `prompt.submit`, `turn.complete` | Whether a turn is running. |
+| `classic.SessionStart` | The session's id and folder, to find its tasks folder. |
+| `ui.render` `SessionMode` | The footer label, after Claude Code's own mode labels. |
 | `$.ui.notify` | Tells you of a failure through your notification channel. |
 | `$.clock.every` | Reads changed output files once a second; animates at ~4 fps while something runs. |
 | `$.agent.list()` | Mirrors the tasks list's subagents. |
@@ -124,10 +127,13 @@ itself (Claude Code drives the terminal's own progress indicator).
 
 What it **reads**:
 
-- **Task output files** (`$.fs.stat`, `$.fs.read`): only the output file
-  Claude Code itself names when it starts a background Bash or PowerShell task
-  (`Output is being written to: …`), the last 64 KiB of it, to draw the bars.
-  No other file.
+- **Task output files** (`$.fs.stat`, `$.fs.read`, `$.fs.list`): the output
+  files Claude Code writes in the session's tasks folder: the one it names when
+  a background Bash or PowerShell task starts (`Output is being written to: …`),
+  and, for a foreground command, the new `b????????.output` file that appears
+  there when it starts. The last 64 KiB of each, to draw the bars. To find that
+  folder before a background task names it, the mod lists the temporary folder
+  for Claude Code's own (`claude…/<project>/<session>/tasks`). No other file.
 - **Conversation rows** (`session.append`): only rows holding a
   `<task-notification>`, for a task's id, status and exit code. Other rows pass
   through untouched and unread.
@@ -140,8 +146,8 @@ What it **reads**:
   unchanged.
 - **The tasks list** (`$.agent.list`, `classic.Stop`): subagents' description
   and status, and the ids of background tasks still running at a turn's end.
-- **Three environment variables** (`LC_ALL`, `LC_CTYPE`, `LANG`): to pick ASCII
-  bars where the locale is not UTF-8.
+- **Six environment variables**: `LC_ALL`, `LC_CTYPE`, `LANG`, to pick ASCII bars
+  where the locale is not UTF-8; `TMPDIR`, `TEMP`, `TMP`, to find the tasks folder.
 
 What it **sends**, and where:
 
@@ -170,8 +176,6 @@ session state and are gone when the session ends.
 
 ## Limits
 
-- Foreground commands show a spinner and elapsed time only: their output is not
-  readable while they run. Long jobs belong in the background anyway.
 - Only the last 64 KiB of an output is parsed; past 4 MiB the band shows a
   sweeping bar and says the log is too large.
 - Progress hidden by a tool when its output is not a terminal can't be read:

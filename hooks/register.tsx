@@ -82,6 +82,109 @@ let isPolling = false
 let isAnimating = false
 let pending: { title: string; text: string }[] = []
 let env: CharsetEnv | undefined
+
+/**
+ * The session's tasks folder, where Claude Code writes every shell call's
+ * output as it runs, foreground calls included (checked live: a foreground
+ * command's `b????????.output` grows line by line). Learned from a background
+ * call's or a subagent's output path, else found from the session's id.
+ */
+let tasksDir: string | undefined
+let sessionInfo: { id: string; cwd: string } | undefined
+/** Foreground calls waiting for their output file: the folder's files before each started. */
+const pendingForeground = new Map<string, { dir: string; before: Set<string> }>()
+/** A shell call's output file: `b` and eight characters. A subagent's transcript is named otherwise. */
+const SHELL_OUTPUT = /^b[a-z0-9]{8}\.output$/
+
+function folderOf(path: string): string {
+  return path.replace(/[\\/][^\\/]+$/, '')
+}
+
+function learnTasksDir(outputFile: string | undefined): void {
+  if (outputFile && !tasksDir) {
+    tasksDir = folderOf(outputFile)
+  }
+}
+
+/** The tasks folder: learned, or found under the temporary folder, as `<tmp>/claude…/<cwd slug>/<session>/tasks`. */
+async function findTasksDir($: EngineInterface): Promise<string | undefined> {
+  if (tasksDir || !sessionInfo) {
+    return tasksDir
+  }
+
+  const slug = sessionInfo.cwd.replace(/[^A-Za-z0-9]/g, '-')
+  const roots = [await $.env.get('TMPDIR'), await $.env.get('TEMP'), await $.env.get('TMP'), '/tmp'].filter(
+    (root): root is string => Boolean(root),
+  )
+
+  for (const root of roots) {
+    let entries: Awaited<ReturnType<typeof $.fs.list>>
+
+    try {
+      entries = await $.fs.list(root)
+    } catch {
+      continue
+    }
+
+    for (const entry of entries.filter(one => one.kind === 'dir' && one.name.startsWith('claude'))) {
+      const candidate = `${root}/${entry.name}/${slug}/${sessionInfo.id}/tasks`
+
+      try {
+        if ((await $.fs.stat(candidate)).kind === 'dir') {
+          tasksDir = candidate
+
+          return tasksDir
+        }
+      } catch {
+        // Not this one.
+      }
+    }
+  }
+
+  return undefined
+}
+
+/** Shell output files in the tasks folder now. */
+async function shellOutputs($: EngineInterface, dir: string): Promise<Set<string>> {
+  try {
+    return new Set((await $.fs.list(dir)).filter(one => SHELL_OUTPUT.test(one.name)).map(one => one.name))
+  } catch {
+    return new Set()
+  }
+}
+
+/**
+ * Gives each running foreground call the output file that appeared after it
+ * started and that no other task holds, oldest first: two calls started
+ * together may swap files, never share one.
+ */
+async function claimForegroundOutputs($: EngineInterface, list: readonly Track[]): Promise<Map<string, Patch>> {
+  const patches = new Map<string, Patch>()
+  // By file name: the engine spells the folder with `\` on Windows where a path was joined with `/`.
+  const held = new Set(list.map(one => one.outputFile?.split(/[\\/]/).pop()).filter((name): name is string => Boolean(name)))
+  const waiting = list
+    .filter(one => one.kind === 'fg' && one.status === 'running' && !one.outputFile && pendingForeground.has(one.id))
+    .sort((a, b) => a.startedAt - b.startedAt)
+
+  for (const track of waiting) {
+    const pending = pendingForeground.get(track.id)
+
+    if (!pending) {
+      continue
+    }
+
+    const now = await shellOutputs($, pending.dir)
+    const fresh = [...now].find(name => !pending.before.has(name) && !held.has(name))
+
+    if (fresh) {
+      held.add(fresh)
+      patches.set(track.id, { outputFile: `${pending.dir}/${fresh}`, size: -1 })
+      pendingForeground.delete(track.id)
+    }
+  }
+
+  return patches
+}
 /** The person's options, set as the module registers. */
 let notifyMode: NotifyMode = 'failures'
 let isFollowingAgents = true
@@ -308,18 +411,18 @@ async function poll($: EngineInterface): Promise<void> {
   }
 
   const now = await $.clock.now()
-  const patches = new Map<string, Patch>()
+  const patches = await claimForegroundOutputs($, list)
   const removed = new Set<string>()
   const declared: string[] = []
 
-  for (const track of list) {
+  for (const track of list.map(one => (patches.has(one.id) ? { ...one, ...patches.get(one.id) } : one))) {
     if (track.status === 'done' && !isShortOfTotal(track) && now - (track.endedAt ?? now) > DONE_LINGER_MS) {
       removed.add(track.id)
-    } else if (track.status === 'running' && track.kind === 'bg') {
+    } else if (track.status === 'running' && track.kind !== 'agent' && track.outputFile) {
       const patch = await refresh($, track, now)
 
       if (patch) {
-        patches.set(track.id, patch)
+        patches.set(track.id, { ...patches.get(track.id), ...patch })
 
         if (patch.status) {
           declared.push(track.id)
@@ -437,16 +540,31 @@ async function followShell<R extends ShellResult>(
   const isBackground = e.run_in_background === true
 
   if (!isBackground) {
+    const dir = await findTasksDir($)
+
+    // The files there before this call started: its own is the one that appears next.
+    if (dir) {
+      pendingForeground.set(e.tool_use_id, { dir, before: await shellOutputs($, dir) })
+    }
+
     await update($, tracks, list =>
       upsert(list, { id: e.tool_use_id, label, kind: 'fg', startedAt, status: 'running', lastChangeAt: startedAt, size: 0 }),
     )
   }
 
-  const ran = await run()
+  let ran: R
+
+  try {
+    ran = await run()
+  } finally {
+    pendingForeground.delete(e.tool_use_id)
+  }
   const isAnswered = ran.deny === undefined && ran.isError !== true
   const record = isAnswered ? (ran.result as { backgroundTaskId?: string; backgroundOutputPath?: string } | undefined) : undefined
   const background = isAnswered ? backgroundOf(ran.text, record ?? undefined) : undefined
   const now = await $.clock.now()
+
+  learnTasksDir(background?.outputFile)
 
   await update($, tracks, list => {
     const rest = list.filter(one => one.id !== e.tool_use_id)
@@ -592,10 +710,16 @@ export const register: Register = (on, options) => {
   }).catch(($, e, next) => next(e))
 
   // A subagent starting is the moment to begin polling the tasks list.
-  on('tool.call', { tool: 'Agent' }, ($, e, next) => {
+  on('tool.call', { tool: 'Agent' }, async ($, e, next) => {
     startTimers($)
 
-    return next(e)
+    const ran = await next(e)
+    // A subagent's output file sits in the session's tasks folder, the one foreground calls write to.
+    const launched = ran.isError !== true && ran.deny === undefined ? (ran.result as { outputFile?: unknown } | undefined) : undefined
+
+    learnTasksDir(typeof launched?.outputFile === 'string' ? launched.outputFile : undefined)
+
+    return ran
   }).catch(($, e, next) => next(e))
 
   // A task Claude stopped has ended now, whatever its notification says later.
@@ -613,7 +737,16 @@ export const register: Register = (on, options) => {
 
   // At a turn's end the session lists the background work still in flight: a task it no
   // longer lists has ended, though its notification has not come yet (the desktop app).
+  // The session's id and folder, to find its tasks folder before any background call names it.
+  on('classic.SessionStart', async ($, e, next) => {
+    sessionInfo = { id: e.session_id, cwd: e.cwd }
+
+    return next(e)
+  }).catch(($, e, next) => next(e))
+
   on('classic.Stop', async ($, e, next) => {
+    sessionInfo ??= { id: e.session_id, cwd: e.cwd }
+
     const result = await next(e)
     const inFlight = e.background_tasks?.map(task => task.id)
 
