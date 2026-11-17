@@ -86,6 +86,52 @@ export function agentLineOf(agent: AgentRow): string {
   return `${state}${what}${used}`
 }
 
+/** What the `progress` tool takes: where an agent is in its task. */
+export type Report = { step?: unknown; total?: unknown; label?: unknown; done?: unknown }
+
+/**
+ * A `progress` call as a bar, or a reason it can't be one. Steps are counted
+ * as `##progress step=3/7` counts them: the third of seven is under way.
+ */
+export function reportOf(input: Report): { bar: Bar; isDone: boolean } | { problem: string } {
+  const step = typeof input.step === 'number' && Number.isFinite(input.step) ? Math.max(0, Math.floor(input.step)) : undefined
+  const total = typeof input.total === 'number' && Number.isFinite(input.total) && input.total > 0 ? Math.floor(input.total) : undefined
+  const label = typeof input.label === 'string' ? input.label.replace(/\s+/g, ' ').trim().slice(0, 80) : ''
+
+  if (step === undefined && !label) {
+    return { problem: 'give at least `step` or `label`' }
+  }
+
+  return {
+    bar: { n: Math.min(step ?? 0, total ?? Number.POSITIVE_INFINITY), ...(total !== undefined && { total }), ...(label && { label }) },
+    isDone: input.done === true,
+  }
+}
+
+/**
+ * What goes after a subagent's text in the tasks list: its reported step as a
+ * short bar, then the bar of the command it is running. Kept short: the row
+ * also holds the agent's type, time and tokens.
+ */
+export function rowProgressOf(main: Bar | undefined, sub: Bar | undefined, now: number, glyphs: Glyphs = UNICODE): string {
+  const parts: string[] = []
+
+  if (main) {
+    const counted = main.total !== undefined ? `${count(main.n)}/${count(main.total)}` : main.label ? '' : count(main.n)
+
+    parts.push([cells(main, 8, now, glyphs), counted, main.label ?? ''].filter(Boolean).join(' '))
+  }
+
+  if (sub) {
+    const fraction = fractionOf(sub)
+    const amount = fraction !== undefined ? `${Math.floor(fraction * 100)}%` : `${count(sub.n)}${sub.unit ?? ''}`
+
+    parts.push([main ? '' : cells(sub, 8, now, glyphs), clip(sub.label ?? '', 24, glyphs.ellipsis), amount].filter(Boolean).join(' '))
+  }
+
+  return parts.join(' · ')
+}
+
 /** Counts as tqdm prints them: plain up to 99,999, then `1.2M`. */
 export function count(n: number): string {
   if (n < 100_000) {

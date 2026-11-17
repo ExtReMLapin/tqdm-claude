@@ -42,7 +42,12 @@ watches; that folder is git-ignored and must never be committed).
   only our tree: that erases other plugins' bands.
 - `PromptHint.tail`: append to the tail we were handed, never replace it.
 - `SessionMode` (right of the hint line) is never cut; `tail` is; `$.ui.status`
-  draws as a yellow plugin warning. The tasks list has no render site at all.
+  draws as a yellow plugin warning.
+- The tasks list: its subagent rows are the `AgentRow` render site (2.1.326,
+  in the types but not in the web docs). A hook may change `label`, `body` and
+  `isHidden` only; we append to `label` and call `next`, so the row, its time
+  and tokens stay Claude Code's. The `● main` row is not an `AgentRow`. Rows
+  are about 34 cells besides the text: clip the text, or the bar is cut.
 - Never emit OSC 9;4: Claude Code drives the terminal's progress indicator.
 
 **Code Mode (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, 2.1.323+)**
@@ -62,9 +67,15 @@ watches; that folder is git-ignored and must never be committed).
   watching the file grow); the API alone says otherwise (`ToolUse.output` is
   undefined while running). We list the folder before the call and claim the
   file that appears next.
-- Subagents' tool calls carry `agentId`: their shells are ignored, the subagent
-  is followed as one task. Subagent output files are named otherwise (not `b` +
-  8 characters), so they are never claimed.
+- Subagents' tool calls carry `agentId`: their shells are followed with
+  `owner` set, never shown as rows of their own (`isShown`), drawn on the
+  subagent's row and track, never notified, and dropped when the subagent
+  stops running. Subagent transcripts are named otherwise (not `b` + 8
+  characters), so they are never claimed as a shell's output.
+- Tools a mod registers reach subagents too, with no permission prompt (seen
+  for subagents in auto mode, for the main conversation in manual mode): the
+  `progress` tool's description is the instruction, as subagents' prompts are
+  not ours to extend.
 - On Windows the engine spells paths with `\` whatever we joined them with:
   compare file names, not full paths (and make test fixtures use `\`).
 

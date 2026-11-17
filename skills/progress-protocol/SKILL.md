@@ -31,6 +31,14 @@ Print progress lines, one per update, two to ten a second at most:
 `msg="..."` for a status; `done=ok` or `done=fail` when a process that keeps
 running has finished its work. The full spec is `PROTOCOL.md` in the mod.
 
+## Work in several steps
+
+For your own work in several steps (not a script's), call the
+`mcp__tqdm-claude__progress` tool when you start each step:
+`step=2, total=5, label="Running the tests"`, then `done=true` at the end.
+A subagent's step shows on its row in the tasks list; the main conversation's
+in the band. Only at a new step: every call is a tool call.
+
 ## When it ends
 
 You get a task notification with the exit code. Report it to the person in

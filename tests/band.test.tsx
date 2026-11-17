@@ -26,6 +26,9 @@ function agent(row: Pick<AgentInfo, 'id' | 'description' | 'type' | 'status'> & 
   } as AgentInfo
 }
 
+/** The text of the last tasks-list row drawn. */
+let drawnRow = ''
+
 /** The engine beneath the plugin: a clock, a file system in memory, and a Bash tool. */
 function world(on: On) {
   const clock = mock.clock(on, { now: 1_000_000 })
@@ -51,6 +54,15 @@ function world(on: On) {
     const { Text } = $.ui.resolve(e)
 
     return <Text>(engine band)</Text>
+  })
+
+  // Claude Code's own drawing of a tasks-list row: its text, as the plugin passed it on.
+  on('ui.render', { component: 'AgentRow' }, ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    drawnRow = e.props.label ?? e.props.description
+
+    return <Text>{drawnRow}</Text>
   })
 
   on('tool.call', { tool: 'Bash' }, async ($, e) => {
@@ -410,6 +422,132 @@ describe('subagents, as the tasks list describes them', () => {
 
     expect(await texts(ui)).toContain('02:06')
     await ui.unmount()
+  })
+})
+
+const PROGRESS = 'mcp__tqdm-claude__progress'
+
+/** A tasks-list row as Claude Code asks for it, and what reached the bottom of the chain: Claude Code's own drawing. */
+type Mounter = { ui: { mount(target: never): Promise<{ unmount(): Promise<void> }> } }
+
+async function agentRow($: Mounter, row: AgentInfo): Promise<string> {
+  drawnRow = ''
+
+  const ui = await $.ui.mount({
+    surface: 'terminal',
+    plugin: PLUGIN,
+    component: 'AgentRow',
+    props: { ...row, columns: 120, isHidden: false },
+  } as never)
+
+  await ui.unmount()
+
+  return drawnRow
+}
+
+describe('steps an agent reports', () => {
+  test('the main conversation: a bar of its own in the band, done when the turn ends', async ($, on) => {
+    const { clock } = world(on)
+
+    const ran = await $.tool.call({ tool: PROGRESS, step: 2, total: 5, label: 'Running the tests' })
+
+    expect(JSON.stringify(ran)).toContain('Shown.')
+    await clock.advance(300)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const drawn = await texts(ui)
+
+    expect(drawn).toContain('main')
+    expect(drawn).toContain('2/5')
+    expect(drawn).toContain('Running the tests')
+
+    await $.turn.complete({ turnId: 't1', answer: 'done' } as Parameters<typeof $.turn.complete>[0]).catch(() => undefined)
+    await clock.advance(300)
+    expect(await texts(ui)).toContain('✓')
+    await ui.unmount()
+  })
+
+  test('a call with nothing to show is refused, and says why', async ($, on) => {
+    world(on)
+
+    const ran = await $.tool.call({ tool: PROGRESS, total: 5 })
+
+    expect(JSON.stringify(ran)).toContain('give at least')
+  })
+
+  test("a subagent: its step goes after Claude Code's text on its row, and in the band", async ($, on) => {
+    const { clock } = world(on)
+    const row = agent({ id: 'a1', description: 'Port the parser', type: 'general-purpose', status: 'running', label: 'Editing parse.ts' })
+
+    on('agent.list', () => ({ value: [row] }))
+    void $.tool.call({ tool: 'Bash', command: 'true', description: 'kick' })
+    await clock.advance(1100)
+    await $.tool.call({ tool: PROGRESS, step: 3, total: 7, label: 'Tests', agentId: 'a1' } as Parameters<typeof $.tool.call>[0])
+    await clock.advance(300)
+
+    const drawn = await agentRow($, row)
+
+    expect(drawn).toMatch(/^Editing parse\.ts {2}\S+ 3\/7 Tests$/)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+    expect(await texts(ui)).toContain('3/7')
+    await ui.unmount()
+  })
+
+  test('a step reported before the tasks list showed the subagent is kept for it', async ($, on) => {
+    const { clock } = world(on)
+    const row = agent({ id: 'a2', description: 'Early bird', type: 'Explore', status: 'running' })
+    let listed: AgentInfo[] = []
+
+    on('agent.list', () => ({ value: listed }))
+    await $.tool.call({ tool: PROGRESS, step: 1, total: 2, label: 'Reading', agentId: 'a2' } as Parameters<typeof $.tool.call>[0])
+    listed = [row]
+    void $.tool.call({ tool: 'Bash', command: 'true', description: 'kick' })
+    await clock.advance(1100)
+
+    expect(await agentRow($, row)).toContain('1/2 Reading')
+  })
+
+  test("a subagent's command: no row of its own, its bar on the subagent's row, gone with the subagent", async ($, on) => {
+    const { clock, files } = world(on)
+    let row = agent({ id: 'a1', description: 'Train', type: 'general-purpose', status: 'running' })
+
+    on('agent.list', () => ({ value: [row] }))
+    await $.tool.call({
+      tool: 'Bash',
+      command: 'python -u train.py',
+      description: 'Fine-tune',
+      run_in_background: true,
+      agentId: 'a1',
+    } as Parameters<typeof $.tool.call>[0])
+    files.set(OUTPUT, 'Epochs:  40%|████      | 2/5 [01:00<01:30, 30.0s/it]')
+    await clock.advance(1100)
+
+    expect(await agentRow($, row)).toContain('Epochs 40%')
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const drawn = await texts(ui)
+
+    // Shown under the subagent, never as a task of its own.
+    expect(drawn).not.toContain('Fine-tune')
+    expect(drawn).toContain('Epochs')
+
+    row = { ...row, status: 'completed' }
+    await clock.advance(1100)
+    expect(await texts(ui)).not.toContain('Epochs')
+    await ui.unmount()
+  })
+
+  test('a row with nothing reported is left as Claude Code draws it', async ($, on) => {
+    const { clock } = world(on)
+    const row = agent({ id: 'a1', description: 'Quiet', type: 'Explore', status: 'running', label: 'Reading files' })
+
+    on('agent.list', () => ({ value: [row] }))
+    void $.tool.call({ tool: 'Bash', command: 'true', description: 'kick' })
+    await clock.advance(1100)
+
+    expect(await agentRow($, row)).toBe('Reading files')
   })
 })
 

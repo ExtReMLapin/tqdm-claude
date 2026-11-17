@@ -49,6 +49,12 @@ makes every background task visible and makes failure loud.
 - **Subagents** from the tasks list: what each is doing now (the tasks list's
   own summary), the tokens it has used, whether it is waiting, its elapsed
   time and how it ended.
+- **Where each agent is in its task**, in Claude Code's own tasks list: the mod
+  gives Claude a `progress` tool, and a subagent that reports its steps gets a
+  bar after its text, followed by the bar of the command it runs:
+  `◯ general-purpose  Dataset check ██░░░░░░ 1/4 Download · wikitext-103.tar 66%`.
+  Claude Code's row stays as it is: only its text is extended. The main
+  conversation's steps show in the band.
 - **Notifications** through your own channel when a task fails or ends early
   (or, if you like, when a long one succeeds), so you can look away.
 - **A stuck turn is called out**: no tool call for 3 minutes.
@@ -123,6 +129,9 @@ says the same where organization policy keeps plugins out of the system prompt.
 | `$.ui.notify` | Tells you of a failure through your notification channel. |
 | `$.clock.every` | Reads changed output files once a second; animates at ~4 fps while something runs. |
 | `$.agent.list()` | Mirrors the tasks list's subagents. |
+| `tool.call` (Bash, PowerShell from a subagent) | Follows a subagent's commands, shown on its row, not as tasks of their own. |
+| `$.tool.register`, `tool.call` (its `progress` tool) | Notes where the main conversation or a subagent is in its task. |
+| `ui.render` `AgentRow` | Adds the step and the command's bar after a subagent's text in the tasks list. |
 | `$.process.run` | Only for an output past 4 MiB: reads its last 64 KiB (`tail`, or PowerShell on Windows). |
 | `ui.render` `AbovePrompt` | Draws the band. |
 | `ui.render` `PromptHint` | Adds the summary after Claude Code's own hint line. |
@@ -157,10 +166,15 @@ What it **reads**:
 - **Prompts** (`prompt.submit`): only the moment a turn starts, for the
   stuck-turn warning. The prompt's text is not read, kept or changed.
 - **Tool calls** (`tool.call`): a Bash or PowerShell call's `description`,
-  `command` (its first line, as the title when there is no description) and
-  `run_in_background`, and the task id in its result; `TaskStop`'s task id; the
-  start and end of every call, for the stuck-turn warning. Every call goes on
-  unchanged.
+  `command` (its first line, as the title when there is no description),
+  `run_in_background` and the subagent making it, if any, and the task id in
+  its result; `TaskStop`'s task id; the start and end of every call, for the
+  stuck-turn warning. Every call goes on unchanged.
+- **Its own `progress` tool** (`$.tool.register`): the step, total, label and
+  `done` Claude passes it, and which subagent called it. It answers itself and
+  does nothing else.
+- **The tasks list's rows** (`ui.render` `AgentRow`): a subagent's id, type,
+  text and row width, to add its step after its text.
 - **The tasks list** (`$.agent.list`, `classic.Stop`): subagents' description,
   type, status, start time, live summary and token count, and the ids of
   background tasks still running at a turn's end.
@@ -184,7 +198,10 @@ What it **changes**:
   read or changed. It is not added under `--bare`.
 - **The screen** (`ui.render`): draws the band above the prompt, above any
   other plugin's band, and adds a summary after the hint line under the prompt,
-  after any other plugin's.
+  after any other plugin's. In the tasks list, adds a subagent's step after its
+  text; the rest of the row is Claude Code's.
+- **Tools** (`tool.register`): adds `mcp__tqdm-claude__progress`, which only
+  notes a step.
 - **Commands** (`command.register`, `command.run`): adds `/tqdm` and answers
   only it; other commands pass through untouched.
 

@@ -106,8 +106,35 @@ until it is flushed, which looks exactly like a frozen task.
 
 Two to ten updates a second is plenty: the band redraws once a second from the
 file. Printing on every loop iteration of a tight loop only grows the log; the
-mod reads the last 64 KiB and stops parsing logs over 4 MiB (it then shows a
-sweeping bar and says the log is too large).
+mod reads the last 64 KiB (past 4 MiB, by `tail` or PowerShell; where no
+process may run, it shows a sweeping bar and says the log is too large).
+
+## Steps of an agent's own work: the `progress` tool
+
+`##progress` is for scripts. For Claude's own work in several steps (a
+subagent porting a module, the main conversation running a checklist), the
+mod adds a tool, `mcp__tqdm-claude__progress`:
+
+```json
+{ "step": 2, "total": 5, "label": "Running the tests" }
+{ "label": "Wrapping up", "done": true }
+```
+
+- `step`: the step under way, counted from 1, as in `step=2/5`. `total`, if
+  known. `label`: what the step does. At least `step` or `label`.
+- **From a subagent**, the step shows after its text on its row in the tasks
+  list (`◯ general-purpose  Port the parser ██▋░░░░░ 2/5 Running the tests`),
+  and on its track in the band.
+- **From the main conversation**, it shows as a `main` track in the band,
+  done at the end of the turn or on `done: true`.
+- Call it at each new step only: every call is a tool call.
+
+The tool's description tells every agent this, subagents included: nothing
+needs to be added to their prompts.
+
+A subagent's commands are followed too: their bars (tqdm, `##progress`, any
+tool above) show on its row after its step, and under its track in the band,
+never as tasks of their own.
 
 ## What else is read
 

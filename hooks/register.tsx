@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { AgentInfo, EngineInterface, Register } from 'claude-code'
 
-import type { Activity, Track } from '../types'
-import { CHARSETS, type CharsetEnv, chooseCharset } from './charset'
+import type { Activity, Bar, Track } from '../types'
+import { CHARSETS, type CharsetEnv, chooseCharset, widthOf } from './charset'
 import { backgroundOf, notificationsOf, parse } from './parse'
 import { tailCommand } from './tail'
 import {
@@ -22,6 +22,9 @@ import {
   type NotifyMode,
   ordered,
   receiptOf,
+  type Report,
+  reportOf,
+  rowProgressOf,
   rowsOf,
   silentStartHint,
   modeLabelOf,
@@ -51,7 +54,32 @@ const DONE_LINGER_MS = 8000
 const STUCK_MS = 3 * 60_000
 /** `$.fs.read` refuses past 4 MiB. */
 const MAX_READ_BYTES = 4 * 1024 * 1024 - 1024
-const MAX_TRACKS = 20
+/** Room for the band's tasks and the subagents' commands, which have no row of their own. */
+const MAX_TRACKS = 40
+/** The tool agents report their steps with, and the name Claude sees it under (`mcp__`, the plugin, the tool). */
+const PROGRESS_TOOL = 'progress'
+const PROGRESS_TOOL_NAME = 'mcp__tqdm-claude__progress'
+/** The main conversation's own steps, in the band. */
+const MAIN_TRACK = 'main'
+/** What a tasks-list row holds besides its text: its mark, the agent's type, its time and tokens. */
+const ROW_RESERVED_CELLS = 34
+
+const PROGRESS_TOOL_DESCRIPTION = [
+  'Shows the person where you are in a task of several steps, live: on your row in the tasks list when you are a subagent, above the prompt otherwise.',
+  'Call it when you start each step of a task that takes several (step=2, total=5, label="Running the tests"), and with done=true when the task is finished.',
+  'Only at a new step, never in a loop or to poll: it costs a tool call. Skip it for a task of one or two quick steps.',
+  'It returns at once and changes nothing else.',
+].join(' ')
+
+const PROGRESS_TOOL_SCHEMA = {
+  type: 'object',
+  properties: {
+    step: { type: 'integer', minimum: 0, description: 'The step now under way, counted from 1.' },
+    total: { type: 'integer', minimum: 1, description: 'How many steps the task has, if known.' },
+    label: { type: 'string', description: 'What this step does, in a few words.' },
+    done: { type: 'boolean', description: 'True once the whole task is finished.' },
+  },
+} as const
 
 const PROTOCOL_SECTION = {
   id: 'tqdm-claude:protocol',
@@ -64,6 +92,7 @@ const PROTOCOL_SECTION = {
     '- In scripts you write, report progress with one line per update: `##progress step=3/7 label="Training" sub=1840/2400 sublabel="Epoch 3"` (`sub=1840` with no total when unknown; `pct=45` for a bare percentage; `ok=12 fail=2` to count outcomes; `msg="..."` for a status; `done=ok` or `done=fail` when a long-lived process finished its work). tqdm output needs nothing extra.',
     '- Do not poll a background task\'s output file or sleep to wait for it: the band shows its progress to the person, and you are notified when it ends.',
     '- When a background task ends, report its exit code; never take silence for success.',
+    `- For a task of several steps, call the \`${PROGRESS_TOOL_NAME}\` tool at the start of each step: the person sees where you are. Subagents can call it too.`,
   ].join('\n'),
 } as const
 
@@ -408,7 +437,10 @@ async function syncAgents($: EngineInterface): Promise<void> {
           lastChangeAt: now,
           size: 0,
           lastLine: line,
+          // A step it reported before the tasks list showed it.
+          ...(earlyReports.has(agent.id) && { main: earlyReports.get(agent.id) }),
         })
+        earlyReports.delete(agent.id)
       } else if (known && known.status === 'running' && !end && known.lastLine !== line) {
         next = next.map(one => (one.id === id ? { ...one, lastLine: line } : one))
       } else if (known && known.status === 'running' && end) {
@@ -430,7 +462,10 @@ async function syncAgents($: EngineInterface): Promise<void> {
       return one
     })
 
-    return next
+    // A subagent's commands go with it: once it is no longer running, they leave too.
+    const running = new Set(agents.filter(agent => !AGENT_ENDED[agent.status]).map(agent => agent.id))
+
+    return next.filter(one => one.owner === undefined || running.has(one.owner))
   })
 
   if (ended.length > 0) {
@@ -482,13 +517,83 @@ async function poll($: EngineInterface): Promise<void> {
     const current = await read($, tracks)
 
     for (const id of declared) {
-      await tell($, current.find(one => one.id === id))
+      const track = current.find(one => one.id === id)
+
+      if (track?.owner === undefined) {
+        await tell($, track)
+      }
     }
   }
 }
 
 function isShown(track: Track, now: number): boolean {
-  return track.kind !== 'fg' || now - track.startedAt >= FOREGROUND_AFTER_MS
+  // A subagent's command is drawn on its subagent's row.
+  return track.owner === undefined && (track.kind !== 'fg' || now - track.startedAt >= FOREGROUND_AFTER_MS)
+}
+
+/** The bar of the command a subagent runs now: the newest of its commands with a bar. */
+function ownedBarOf(agentTrack: Track, list: readonly Track[]): Bar | undefined {
+  const owner = agentTrack.id.replace(/^agent:/, '')
+  const shell = list
+    .filter(one => one.owner === owner && one.status === 'running' && one.main)
+    .sort((a, b) => b.startedAt - a.startedAt)[0]
+
+  return shell?.main ? { ...shell.main, label: shell.main.label ?? shell.label } : undefined
+}
+
+/** A subagent's track as drawn: the command it runs, if it has a bar, under its reported step. */
+function withOwnedWork(track: Track, list: readonly Track[]): Track {
+  if (track.kind !== 'agent' || track.status !== 'running') {
+    return track
+  }
+
+  const sub = ownedBarOf(track, list)
+
+  return sub ? { ...track, sub } : track
+}
+
+/** Steps a subagent reported before the tasks list showed it. */
+const earlyReports = new Map<string, Bar>()
+
+/**
+ * Notes a `progress` call: on the subagent's track, or, from the main
+ * conversation, on a track of its own in the band.
+ */
+async function noteReport($: EngineInterface, agentId: string | undefined, bar: Bar, isDone: boolean): Promise<void> {
+  const now = await $.clock.now()
+
+  if (agentId !== undefined) {
+    const id = `agent:${agentId}`
+    const list = await read($, tracks)
+
+    if (!list.some(one => one.id === id)) {
+      earlyReports.set(agentId, bar)
+
+      return
+    }
+
+    await update($, tracks, current =>
+      current.map(one => (one.id === id && one.status === 'running' ? { ...one, main: bar, lastChangeAt: now } : one)),
+    )
+
+    return
+  }
+
+  await update($, tracks, list => {
+    const known = list.find(one => one.id === MAIN_TRACK)
+    const isNew = !known || known.status !== 'running'
+
+    return upsert(list, {
+      ...(isNew ? { startedAt: now, size: 0 } : known),
+      id: MAIN_TRACK,
+      label: 'main',
+      kind: 'main',
+      status: isDone ? 'done' : 'running',
+      ...(isDone && { endedAt: now }),
+      main: bar,
+      lastChangeAt: now,
+    } as Track)
+  })
 }
 
 function isStuck(state: Activity, now: number): boolean {
@@ -570,13 +675,18 @@ async function settle($: EngineInterface, taskId: string, status: string, exitCo
   }
 
   await update($, tracks, current => patchAll(current, new Map([[taskId, patch]]), new Set()))
-  await tell($, { ...track, ...patch })
+
+  // A subagent's command is its subagent's to report: the person is told of the subagent's end.
+  if (track.owner === undefined) {
+    await tell($, { ...track, ...patch })
+  }
 }
 
 async function followShell<R extends ShellResult>(
   $: EngineInterface,
   e: ShellInput,
   run: () => Promise<R>,
+  owner?: string,
 ): Promise<R> {
   const startedAt = await $.clock.now()
   const label = labelOf(e)
@@ -591,7 +701,16 @@ async function followShell<R extends ShellResult>(
     }
 
     await update($, tracks, list =>
-      upsert(list, { id: e.tool_use_id, label, kind: 'fg', startedAt, status: 'running', lastChangeAt: startedAt, size: 0 }),
+      upsert(list, {
+        id: e.tool_use_id,
+        label,
+        kind: 'fg',
+        ...(owner !== undefined && { owner }),
+        startedAt,
+        status: 'running',
+        lastChangeAt: startedAt,
+        size: 0,
+      }),
     )
   }
 
@@ -617,6 +736,7 @@ async function followShell<R extends ShellResult>(
           id: background.taskId,
           label,
           kind: 'bg',
+          ...(owner !== undefined && { owner }),
           outputFile: background.outputFile,
           startedAt,
           status: 'running',
@@ -662,6 +782,19 @@ export const register: Register = (on, options) => {
   on('session.start', async ($, e, next) => {
     startTimers($)
     await loadEnv($)
+
+    try {
+      // For the main conversation and every subagent: the tool's description is the instruction,
+      // so it reaches subagents whose prompt this plugin's section is not part of.
+      await $.tool.register({
+        name: PROGRESS_TOOL,
+        description: PROGRESS_TOOL_DESCRIPTION,
+        inputSchema: PROGRESS_TOOL_SCHEMA,
+        isDeferred: false,
+      })
+    } catch {
+      // The band works without it: steps are then not shown.
+    }
 
     try {
       // Last, as registering a name another plugin holds throws.
@@ -721,6 +854,13 @@ export const register: Register = (on, options) => {
     runningTools = 0
     await update($, activity, state => ({ ...state, isTurnRunning: false, runningTools: 0 }))
 
+    // The main conversation's steps were this turn's: the turn has ended, so have they.
+    const now = await $.clock.now()
+
+    await update($, tracks, list =>
+      list.map(one => (one.kind === 'main' && one.status === 'running' ? { ...one, status: 'done', endedAt: now } : one)),
+    )
+
     return next(e)
   }).catch(($, e, next) => next(e))
 
@@ -739,17 +879,32 @@ export const register: Register = (on, options) => {
     }
   }).catch(($, e, next) => next(e))
 
-  // A subagent's own commands are its business: the subagent is followed as one task, with its time and end.
+  // A subagent's commands are followed too, but shown on its own row, not as rows of their own.
   on('tool.call', { tool: 'Bash' }, ($, e, next) => {
     startTimers($)
 
-    return e.agentId === undefined ? followShell($, e, () => next(e)) : next(e)
+    return e.agentId === undefined || isFollowingAgents ? followShell($, e, () => next(e), e.agentId) : next(e)
   }).catch(($, e, next) => next(e))
 
   on('tool.call', { tool: 'PowerShell' }, ($, e, next) => {
     startTimers($)
 
-    return e.agentId === undefined ? followShell($, e, () => next(e)) : next(e)
+    return e.agentId === undefined || isFollowingAgents ? followShell($, e, () => next(e), e.agentId) : next(e)
+  }).catch(($, e, next) => next(e))
+
+  // Where an agent is in its task, as it says: on its row in the tasks list, or in the band for the main conversation.
+  on('tool.call', { tool: PROGRESS_TOOL_NAME }, async ($, e) => {
+    startTimers($)
+
+    const report = reportOf(e as Report)
+
+    if ('problem' in report) {
+      return { result: `Not shown: ${report.problem}.`, isError: true }
+    }
+
+    await noteReport($, e.agentId, report.bar, report.isDone)
+
+    return { result: 'Shown.' }
   }).catch(($, e, next) => next(e))
 
   // A subagent starting is the moment to begin polling the tasks list.
@@ -869,11 +1024,39 @@ export const register: Register = (on, options) => {
     return summary ? next({ ...e, props: { ...e.props, tail: [e.props.tail, `  ${summary}`].filter(Boolean).join('') } }) : next(e)
   })
 
+  // A subagent's row in the tasks list: its reported step and its command's bar, after Claude Code's
+  // own text. Only the text changes: the row, its time and tokens stay Claude Code's.
+  on('ui.render', { component: 'AgentRow' }, async ($, e, next) => {
+    if (!isFollowingAgents) {
+      return next(e)
+    }
+
+    const all = await read($, tracks)
+    const known = all.find(one => one.id === `agent:${e.props.id}`)
+    const track = known ? withOwnedWork(known, all) : undefined
+
+    if (!track || track.status !== 'running' || (!track.main && !track.sub)) {
+      return next(e)
+    }
+
+    // The frame clock, read only for a bar with no total: its sweep is all that moves.
+    const isSweeping = (track.main && track.main.total === undefined) || (!track.main && track.sub?.total === undefined)
+    const now = isSweeping ? await read($, clock) : 0
+    const glyphs = CHARSETS[chooseCharset(charset, await loadEnv($), e.surface)]
+    const progress = rowProgressOf(track.main, track.sub, now, glyphs)
+    const text = e.props.label ?? e.props.description
+    const columns = typeof e.props.columns === 'number' ? e.props.columns : 100
+    const room = Math.max(12, columns - ROW_RESERVED_CELLS - widthOf(e.props.type) - widthOf(progress))
+
+    return next({ ...e, props: { ...e.props, label: `${clip(text, room, glyphs.ellipsis)}  ${progress}` } })
+  }).catch(($, e, next) => next(e))
+
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     await read($, clock)
 
     const now = await $.clock.now()
-    const list = ordered((await read($, tracks)).filter(one => isShown(one, now)))
+    const all = await read($, tracks)
+    const list = ordered(all.filter(one => isShown(one, now)).map(one => withOwnedWork(one, all)))
     const state = await read($, activity)
     const stuck = isWarningStuck && isStuck(state, now)
 

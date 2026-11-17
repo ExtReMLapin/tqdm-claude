@@ -45,9 +45,15 @@ export type Track = {
   label: string
   /**
    * `bg`: a background shell whose output file is polled; `fg`: a foreground
-   * call; `agent`: a subagent from `$.agent.list()`, the tasks list's own rows.
+   * call; `agent`: a subagent from `$.agent.list()`, the tasks list's own rows;
+   * `main`: the main conversation's own steps, as it reports them.
    */
-  kind: 'bg' | 'fg' | 'agent'
+  kind: 'bg' | 'fg' | 'agent' | 'main'
+  /**
+   * The subagent whose shell this is. Such a task is not a row of its own: its
+   * bar is shown on its subagent's row, and it ends with the subagent.
+   */
+  owner?: string
   outputFile?: string
   startedAt: number
   endedAt?: number
