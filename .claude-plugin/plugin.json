@@ -1,6 +1,6 @@
 {
   "name": "tqdm-claude",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": { "name": "ExtReMLapin", "url": "https://github.com/ExtReMLapin" },
   "homepage": "https://github.com/ExtReMLapin/tqdm-claude",
   "repository": "https://github.com/ExtReMLapin/tqdm-claude",
@@ -27,7 +27,7 @@
     "agents": {
       "type": "boolean",
       "title": "Follow subagents",
-      "description": "Also shows subagents (the tasks list's agent rows) with their elapsed time and how they ended.",
+      "description": "Also shows subagents (the tasks list's agent rows): what each is doing, its tokens, its elapsed time and how it ended.",
       "default": true
     },
     "notify": {

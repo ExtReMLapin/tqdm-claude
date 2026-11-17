@@ -1,5 +1,6 @@
 {
   "name": "tqdm-claude",
+  "description": "tqdm-claude: live progress bars for Claude Code background tasks and subagents.",
   "owner": { "name": "ExtReMLapin", "url": "https://github.com/ExtReMLapin" },
   "plugins": [
     {

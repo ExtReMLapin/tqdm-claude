@@ -46,6 +46,46 @@ export function durationMs(text: string | undefined): number | undefined {
   return text.split(':').reduce((sum, part) => sum * 60 + Number(part), 0) * 1000
 }
 
+/** `12_400` → `12.4k`: token counts, which are read at a glance, not to the unit. */
+function tokens(n: number): string {
+  if (n < 1000) {
+    return String(n)
+  }
+
+  for (const [size, suffix] of [[1e6, 'M'], [1e3, 'k']] as const) {
+    if (n >= size) {
+      return `${(n / size).toFixed(n / size < 100 ? 1 : 0)}${suffix}`
+    }
+  }
+
+  return String(n)
+}
+
+/** What a subagent's row needs from the tasks list's own row for it. */
+export type AgentRow = {
+  type: string
+  description: string
+  status: string
+  /** The tasks list's live summary of what the agent is doing; its description until there is one. */
+  label?: string
+  tokenCount?: number
+}
+
+/**
+ * The line under a subagent's title: what it is doing now, as the tasks list
+ * says it, and the tokens it has used. The title keeps the description it
+ * was started with, so the summary is shown only when it says something else.
+ */
+export function agentLineOf(agent: AgentRow): string {
+  const summary = agent.label?.trim()
+  const what = summary && summary !== agent.description.trim() ? summary : agent.type
+  // An agent waiting on something, or idle between turns, is not working: said first, as the tasks list does.
+  const state = agent.status === 'waiting' || agent.status === 'idle' ? `${agent.status} · ` : ''
+  const used = agent.tokenCount !== undefined && agent.tokenCount > 0 ? ` · ${tokens(agent.tokenCount)} tokens` : ''
+
+  return `${state}${what}${used}`
+}
+
 /** Counts as tqdm prints them: plain up to 99,999, then `1.2M`. */
 export function count(n: number): string {
   if (n < 100_000) {

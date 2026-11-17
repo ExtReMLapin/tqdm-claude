@@ -18,7 +18,7 @@ function agent(row: Pick<AgentInfo, 'id' | 'description' | 'type' | 'status'> & 
     taskStatus: 'running',
     label: row.description,
     startTime: 1_000_000,
-    cwd: 'C:\work',
+    cwd: 'C:\\work',
     tokenCount: 0,
     tokenSamples: [0],
     hasRow: true,
@@ -365,6 +365,92 @@ describe('subagents', () => {
     const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
 
     expect(await texts(ui)).not.toContain('Research')
+    await ui.unmount()
+  })
+})
+
+describe('subagents, as the tasks list describes them', () => {
+  test('the line under the title says what the agent is doing now, and its tokens', async ($, on) => {
+    const { clock } = world(on)
+    let row = agent({ id: 'a1', description: 'Research tqdm internals', type: 'Explore', status: 'running' })
+
+    on('agent.list', () => ({ value: [row] }))
+    void $.tool.call({ tool: 'Bash', command: 'true', description: 'kick' })
+    await clock.advance(1100)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+    // No summary yet: the tasks list's label is the description, so the type is shown.
+    expect(await texts(ui)).toContain('Explore')
+
+    row = { ...row, label: 'Reading tqdm/std.py', tokenCount: 12_400 }
+    await clock.advance(1100)
+
+    const drawn = await texts(ui)
+
+    expect(drawn).toContain('Research tqdm internals')
+    expect(drawn).toContain('Reading tqdm/std.py · 12.4k tokens')
+
+    row = { ...row, status: 'waiting' }
+    await clock.advance(1100)
+    expect(await texts(ui)).toContain('waiting · Reading tqdm/std.py')
+    await ui.unmount()
+  })
+
+  test('an agent started before the mod saw it is timed from its own start', async ($, on) => {
+    const { clock } = world(on)
+
+    on('agent.list', () => ({
+      value: [agent({ id: 'a1', description: 'Long research', type: 'Explore', status: 'running', startTime: 1_000_000 - 125_000 })],
+    }))
+    void $.tool.call({ tool: 'Bash', command: 'true', description: 'kick' })
+    await clock.advance(1100)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+    expect(await texts(ui)).toContain('02:06')
+    await ui.unmount()
+  })
+})
+
+describe('large logs', () => {
+  const BIG = 'x'.repeat(4 * 1024 * 1024 + 10)
+  const TAIL = 'Train:  42%|████▏     | 420/1000 [00:10<00:14, 41.2it/s]'
+
+  test('past 4 MiB, the last 64 KiB are read by a process and the bars still drawn', async ($, on) => {
+    const { clock, files } = world(on)
+    const runs: string[][] = []
+
+    on('process.run', ($, e) => {
+      runs.push([...e.argv])
+
+      // PowerShell prints the file's bytes in base64: UTF-8 here, as tqdm writes it.
+      return { value: { exitCode: 0, stdout: btoa(String.fromCharCode(...new TextEncoder().encode(TAIL))), stderr: '', isStdoutTruncated: false, isStderrTruncated: false } }
+    })
+    await $.tool.call({ tool: 'Bash', command: 'python -u train.py', description: 'Train', run_in_background: true })
+    files.set(OUTPUT, BIG)
+    await clock.advance(1100)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+    const drawn = await texts(ui)
+
+    expect(runs[0]?.[0]).toBe('powershell')
+    expect(drawn).toContain('420/1000')
+    expect(drawn).not.toContain('too large')
+    await ui.unmount()
+  })
+
+  test('when no process can read it, the band says the log is too large', async ($, on) => {
+    const { clock, files } = world(on)
+
+    on('process.run', () => ({ deny: 'no processes here' }))
+    await $.tool.call({ tool: 'Bash', command: 'python -u train.py', description: 'Train', run_in_background: true })
+    files.set(OUTPUT, BIG)
+    await clock.advance(1100)
+
+    const ui = await $.ui.mount({ ...BAND, surface: 'terminal' })
+
+    expect(await texts(ui)).toContain('(log too large to parse)')
     await ui.unmount()
   })
 })

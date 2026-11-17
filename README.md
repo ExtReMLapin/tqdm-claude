@@ -46,7 +46,9 @@ makes every background task visible and makes failure loud.
   hint: output is probably buffered (`python -u`).
 - **ETA** from tqdm's own smoothed estimate, else from the pace since progress
   started (start-up left out).
-- **Subagents** from the tasks list, with elapsed time and how they ended.
+- **Subagents** from the tasks list: what each is doing now (the tasks list's
+  own summary), the tokens it has used, whether it is waiting, its elapsed
+  time and how it ended.
 - **Notifications** through your own channel when a task fails or ends early
   (or, if you like, when a long one succeeds), so you can look away.
 - **A stuck turn is called out**: no tool call for 3 minutes.
@@ -121,6 +123,7 @@ says the same where organization policy keeps plugins out of the system prompt.
 | `$.ui.notify` | Tells you of a failure through your notification channel. |
 | `$.clock.every` | Reads changed output files once a second; animates at ~4 fps while something runs. |
 | `$.agent.list()` | Mirrors the tasks list's subagents. |
+| `$.process.run` | Only for an output past 4 MiB: reads its last 64 KiB (`tail`, or PowerShell on Windows). |
 | `ui.render` `AbovePrompt` | Draws the band. |
 | `ui.render` `PromptHint` | Adds the summary after Claude Code's own hint line. |
 | `prompt.compose` | Tells Claude about the protocol and unbuffered output. |
@@ -131,7 +134,8 @@ itself (Claude Code drives the terminal's own progress indicator).
 ## What it reads, writes and sends
 
 **Nothing leaves your machine.** The mod makes no network request (no
-`$.http`), starts no process (no `$.process`) and writes no file.
+`$.http`) and writes no file. It starts one kind of process, and only for an
+output file past 4 MiB, which `$.fs.read` can't copy (see below).
 
 What it **reads**:
 
@@ -142,6 +146,11 @@ What it **reads**:
   there when it starts. The last 64 KiB of each, to draw the bars. To find that
   folder before a background task names it, the mod lists the temporary folder
   for Claude Code's own (`claude…/<project>/<session>/tasks`). No other file.
+- **The end of a large output** (`$.process.run`): past 4 MiB, the last 64 KiB
+  of that same output file are read by `tail -c 65536 <file>`, or on Windows by
+  `powershell -NoProfile -NonInteractive -EncodedCommand …`, a fixed script that
+  opens the file read-only and prints its last 64 KiB in base64. No other
+  process, no other file, no shell.
 - **Conversation rows** (`session.append`): only rows holding a
   `<task-notification>`, for a task's id, status and exit code. Other rows pass
   through untouched and unread.
@@ -152,8 +161,9 @@ What it **reads**:
   `run_in_background`, and the task id in its result; `TaskStop`'s task id; the
   start and end of every call, for the stuck-turn warning. Every call goes on
   unchanged.
-- **The tasks list** (`$.agent.list`, `classic.Stop`): subagents' description
-  and status, and the ids of background tasks still running at a turn's end.
+- **The tasks list** (`$.agent.list`, `classic.Stop`): subagents' description,
+  type, status, start time, live summary and token count, and the ids of
+  background tasks still running at a turn's end.
 - **Six environment variables**: `LC_ALL`, `LC_CTYPE`, `LANG`, to pick ASCII bars
   where the locale is not UTF-8; `TMPDIR`, `TEMP`, `TMP`, to find the tasks folder.
 
@@ -184,12 +194,17 @@ session state and are gone when the session ends.
 
 ## Limits
 
-- Only the last 64 KiB of an output is parsed; past 4 MiB the band shows a
-  sweeping bar and says the log is too large.
+- Only the last 64 KiB of an output is parsed. Past 4 MiB, that end is read by
+  a process; where none may run, the band shows a sweeping bar and says the log
+  is too large.
+- Not compatible with [Code Mode](https://code.claude.com/docs/en/code-mode)
+  (experimental, off by default): Claude Code doesn't start Code Mode while a
+  mod watches tool calls, as this one does, and says so at startup. In Code
+  Mode, Claude runs no background shell for the band to follow anyway.
 - Progress hidden by a tool when its output is not a terminal can't be read:
   see the "to get progress in a log" column in [PROTOCOL.md](PROTOCOL.md).
 - Built on Claude Code's early-access function-hooks API, which may change
-  between releases. Needs Claude Code 2.1.302 or later (tested on 2.1.302).
+  between releases. Needs Claude Code 2.1.302 or later (tested on 2.1.302 and 2.1.326).
 - Where an organization manages Claude Code, hooks on `prompt.compose` and
   `classic.Stop` run only for plugins it lists: there, Claude learns the
   protocol from the bundled skill instead, and a task ends on its notification

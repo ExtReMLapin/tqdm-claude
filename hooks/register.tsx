@@ -4,7 +4,9 @@ import type { AgentInfo, EngineInterface, Register } from 'claude-code'
 import type { Activity, Track } from '../types'
 import { CHARSETS, type CharsetEnv, chooseCharset } from './charset'
 import { backgroundOf, notificationsOf, parse } from './parse'
+import { tailCommand } from './tail'
 import {
+  agentLineOf,
   barParts,
   cells,
   clip,
@@ -250,6 +252,31 @@ async function flush($: EngineInterface): Promise<void> {
   }
 }
 
+/** A large output's last 64 KiB as text; undefined when no process could read it. */
+async function readTail($: EngineInterface, path: string): Promise<string | undefined> {
+  const { argv, isBase64 } = tailCommand(path)
+
+  try {
+    const ran = await $.process.run(argv, { timeoutMs: 10_000 })
+
+    if (ran.exitCode !== 0) {
+      return undefined
+    }
+
+    if (!isBase64) {
+      return ran.stdout
+    }
+
+    const binary = atob(ran.stdout.trim())
+    const bytes = Uint8Array.from(binary, char => char.charCodeAt(0))
+
+    // A cut through a multi-byte character costs one replacement character at the start, never a failure.
+    return new TextDecoder('utf-8').decode(bytes)
+  } catch {
+    return undefined
+  }
+}
+
 /** Reads a task's output again when it grew; undefined when nothing changed. */
 async function refresh($: EngineInterface, track: Track, now: number): Promise<Patch | undefined> {
   if (!track.outputFile) {
@@ -273,16 +300,21 @@ async function refresh($: EngineInterface, track: Track, now: number): Promise<P
     return undefined
   }
 
+  let text: string | undefined
+
   if (size > MAX_READ_BYTES) {
-    return { size, lastChangeAt: now, isTooBig: true }
-  }
+    // Past what `$.fs.read` copies: only the end is read, by a process, as the bars are all at the end.
+    text = await readTail($, track.outputFile)
 
-  let text: string
-
-  try {
-    text = await $.fs.read(track.outputFile)
-  } catch {
-    return undefined
+    if (text === undefined) {
+      return { size, lastChangeAt: now, isTooBig: true }
+    }
+  } else {
+    try {
+      text = await $.fs.read(track.outputFile)
+    } catch {
+      return undefined
+    }
   }
 
   const parsed = parse(text)
@@ -326,6 +358,13 @@ const AGENT_ENDED: Partial<Record<AgentInfo['status'], Track['status']>> = {
   killed: 'killed',
 }
 
+/** When the agent started, as the tasks list holds it; when it was first seen if that is missing or not a past time. */
+function startOf(agent: AgentInfo, now: number): number {
+  const start = (agent as { startTime?: unknown }).startTime
+
+  return typeof start === 'number' && Number.isFinite(start) && start > 0 && start <= now ? start : now
+}
+
 /**
  * Mirrors the tasks list's subagents: one seen running is followed until it
  * ends; one already ended when first seen is history, never shown. A
@@ -356,18 +395,22 @@ async function syncAgents($: EngineInterface): Promise<void> {
       const id = `agent:${agent.id}`
       const known = next.find(one => one.id === id)
       const end = AGENT_ENDED[agent.status]
+      const line = agentLineOf(agent)
 
       if (!known && !end) {
         next = upsert(next, {
           id,
           label: clip(agent.description || agent.type, 80),
           kind: 'agent',
-          startedAt: now,
+          // The agent's own start, so its time is right when the mod loaded after it started.
+          startedAt: startOf(agent, now),
           status: 'running',
           lastChangeAt: now,
           size: 0,
-          lastLine: agent.type,
+          lastLine: line,
         })
+      } else if (known && known.status === 'running' && !end && known.lastLine !== line) {
+        next = next.map(one => (one.id === id ? { ...one, lastLine: line } : one))
       } else if (known && known.status === 'running' && end) {
         next = next.map(one => (one.id === id ? { ...one, status: end, endedAt: now } : one))
         ended.push(id)
