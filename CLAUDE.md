@@ -90,8 +90,8 @@ watches; that folder is git-ignored and must never be committed).
 **The directory review**
 - README's "What it reads, writes and sends" is what clears the review's data
   holds. Any new `$.fs`, `$.env`, `$.process`, `$.http` or `$.ui.notify` use
-  must be listed there, and the README must stay true ("no network, no
-  process").
+  must be listed there, and the README must stay true (no network; one
+  process, `tail` or PowerShell, only for an output past 4 MiB).
 - No binaries in the repo (`__pycache__`, images other than the icon), no file
   over 256 KiB, no local paths or names in fixtures.
 
