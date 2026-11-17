@@ -45,6 +45,16 @@ watches; that folder is git-ignored and must never be committed).
   draws as a yellow plugin warning. The tasks list has no render site at all.
 - Never emit OSC 9;4: Claude Code drives the terminal's progress indicator.
 
+**Code Mode (`CLAUDE_CODE_EXPERIMENTAL_CODE_MODE=1`, 2.1.323+)**
+- Code Mode refuses to start while any installed mod hooks `tool.call`,
+  `tool.check`, `tool.run`, `classic.PreToolUse`/`PostToolUse`,
+  `agent.spawn` and a few others, whatever the matcher: a hook limited to
+  `Bash` counts too. `session.append` and `ui.render` don't.
+- In Code Mode, Claude's JavaScript calls Bash itself: `run_in_background` is
+  refused ("not available in the async REPL"). Foreground calls still write
+  live to `<tasks>/b????????.output`. `session.append` gets the `REPL` row when
+  the code starts, and the inner `Bash` rows only once it has settled.
+
 **Where output comes from**
 - Background shells: the path is in the result text (`Output is being written
   to: …`); `backgroundOutputPath` is `@internal` and usually absent.

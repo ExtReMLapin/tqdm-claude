@@ -1,4 +1,4 @@
-import type { AgentStatus, On, SessionAppendInput } from 'claude-code'
+import type { AgentInfo, AgentStatus, On, SessionAppendInput } from 'claude-code'
 import { describe, expect, mock, test } from 'claude-code/testing'
 
 const PLUGIN = 'tqdm-claude'
@@ -8,8 +8,23 @@ const BACKGROUND_TEXT = `Command running in background with ID: b1. Output is be
 const BAND = {
   plugin: PLUGIN,
   component: 'AbovePrompt',
-  props: { hasSurvey: false, isWorking: true, maxRows: 14, bodyColumns: 90, scroll: { offset: 0, bodyRows: 13 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 14, bodyColumns: 90, scroll: { offset: 0, bodyRows: 13 }, view: {} },
 } as const
+
+/** A tasks-list row as `$.agent.list()` gives it, with the fields the band does not read filled in. */
+function agent(row: Pick<AgentInfo, 'id' | 'description' | 'type' | 'status'> & Partial<AgentInfo>): AgentInfo {
+  return {
+    kind: 'local_agent',
+    taskStatus: 'running',
+    label: row.description,
+    startTime: 1_000_000,
+    cwd: 'C:\work',
+    tokenCount: 0,
+    tokenSamples: [0],
+    hasRow: true,
+    ...row,
+  } as AgentInfo
+}
 
 /** The engine beneath the plugin: a clock, a file system in memory, and a Bash tool. */
 function world(on: On) {
@@ -319,9 +334,9 @@ describe('subagents', () => {
 
     on('agent.list', () => ({
       value: [
-        { id: 'a1', description: 'Research tqdm internals', type: 'general-purpose', status },
-        { id: 'old', description: 'Finished long ago', type: 'Explore', status: 'completed' },
-        { id: 't1', teammateId: 'bob@team', description: 'Teammate', type: 'teammate', status: 'idle' },
+        agent({ id: 'a1', description: 'Research tqdm internals', type: 'general-purpose', status }),
+        agent({ id: 'old', description: 'Finished long ago', type: 'Explore', status: 'completed' }),
+        agent({ id: 't1', teammateId: 'bob@team', description: 'Teammate', type: 'teammate', status: 'idle' }),
       ],
     }))
     void $.tool.call({ tool: 'Bash', command: 'true', description: 'kick' })
@@ -343,7 +358,7 @@ describe('subagents', () => {
   test('agents=false follows no subagent', { options: { agents: false } }, async ($, on) => {
     const { clock } = world(on)
 
-    on('agent.list', () => ({ value: [{ id: 'a1', description: 'Research', type: 'general-purpose', status: 'running' }] }))
+    on('agent.list', () => ({ value: [agent({ id: 'a1', description: 'Research', type: 'general-purpose', status: 'running' })] }))
     void $.tool.call({ tool: 'Bash', command: 'true', description: 'kick' })
     await clock.advance(1100)
 

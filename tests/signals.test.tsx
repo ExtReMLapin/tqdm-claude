@@ -8,7 +8,7 @@ const BACKGROUND_TEXT = `Command running in background with ID: b1. Output is be
 const BAND = {
   plugin: PLUGIN,
   component: 'AbovePrompt',
-  props: { hasSurvey: false, isWorking: true, maxRows: 14, bodyColumns: 90, scroll: { offset: 0, bodyRows: 13 }, view: {} },
+  props: { hasSurvey: false, isCollapsed: false, isWorking: true, maxRows: 14, bodyColumns: 90, scroll: { offset: 0, bodyRows: 13 }, view: {} },
 } as const
 
 /** The engine beneath: a clock, files in memory, a Bash tool, another plugin's band, and a notification channel. */
